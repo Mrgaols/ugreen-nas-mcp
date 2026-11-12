@@ -92,7 +92,7 @@ interface ToolSpec {
 ### 4.3 调用 unc 的规则
 
 - 一律 `execFile`，不经 shell。
-- 一律 `--format json`。
+- 一律 `--format json`；唯一例外是 `nas_file_read`，用 `--format raw` 取原始字节。
 - 用户提供的值全部放在 `--` 之后作为位置参数，或作为某个 flag 的取值；已验证 `unc` 支持 `--` 分隔。
 - 子进程环境 = 本进程环境。server 不增删 `UNC_*` 变量。
 - 敏感输入走标准输入：`ctl user create` 的密码、`docker compose up` 的 YAML（compose 文件里常有口令，不放进进程列表可见的命令行）。
@@ -187,7 +187,7 @@ interface ToolSpec {
 | `nas_file_tags` | read | `query: list_tags` → `tag list`；`tags_of_paths` → `tag file get`；`files_by_tag` → `tag file list` |
 | `nas_file_mkdir` | write | `file mkdir` |
 | `nas_file_create` | write | `file touch PATH --content --exclusive`，目标已存在则失败，不覆盖 |
-| `nas_file_copy` | write；`replace` 为 admin | `file cp SRC... DST_DIR --on-conflict` |
+| `nas_file_copy` | write；`replace` 为 admin | `file cp SRC DST_DIR --on-conflict`，一次一个源 |
 | `nas_file_restore` | write | `file recover-recycle` |
 | `nas_file_tag_edit` | write；删除类为 admin | `create_tag` / `tag_files` → `tag add` / `tag file add`；`delete_tags` / `untag_files` → `tag delete` / `tag file delete` |
 | `nas_file_upload` | write；`replace` 为 admin | `file upload LOCAL REMOTE`，需本机目录 |
@@ -280,7 +280,7 @@ interface ToolSpec {
   "hint": "server 给出的下一步建议" }
 ```
 
-`error_detail`、`compatibility_hint`、`warnings` 仅在 `unc` 提供时出现。`hint` 的判定：
+`error_detail`、`compatibility_hint`、`warnings` 仅在 `unc` 提供时出现。多目标命令部分失败时另带 `result` 字段，内容是 `unc` 的完整信封，agent 可逐项看 `items[]` 里哪些成功、哪些失败。`hint` 的判定：
 
 | 情形 | `hint` 的要点 |
 |---|---|
