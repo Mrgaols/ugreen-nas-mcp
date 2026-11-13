@@ -96,6 +96,15 @@ describe('file read tools', () => {
     expect(call('nas_file_list', { timeout_seconds: 300 }).timeoutMs).toBe(315000);
   });
 
+  it('tells the agent where each tool puts its results (verified against a real NAS)', () => {
+    // find answers with one envelope for all roots: entries[] at the top level, absent when nothing matches.
+    expect(tool('nas_file_find').description).toContain('top-level entries[]');
+    expect(tool('nas_file_find').description).not.toContain('items[0].entries');
+    // ls and du fan out per path.
+    expect(tool('nas_file_list').description).toContain('items[0].entries[]');
+    expect(tool('nas_file_usage').description).toContain('items[].entries[]');
+  });
+
   it('is read-only by declaration', () => {
     for (const name of ['nas_file_roots', 'nas_file_list', 'nas_file_read', 'nas_file_stat', 'nas_file_find', 'nas_file_usage', 'nas_file_checksum', 'nas_file_tags']) {
       expect([tool(name).toolset, tool(name).minRisk, tool(name).maxRisk]).toEqual(['file', 'read', 'read']);

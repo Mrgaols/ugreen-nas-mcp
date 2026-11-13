@@ -114,8 +114,9 @@ const fileFind = defineTool({
     'Walk one or more folders and return entries matching the filters. kind selects plain files, folders, or a ' +
     'media category (image, video, audio, archive, doc, font, app). Sizes take a unit suffix such as 10K or 4M. ' +
     'since and until are Unix seconds and need time_field to say which timestamp they apply to. Roots must be ' +
-    'shared folders or folders inside them; a volume root is reported as an invalid root. Results are in ' +
-    'items[0].entries[]. For finding files by name across a large area, nas_search_files is faster.',
+    'shared folders or folders inside them; a volume root is reported as an invalid root. All roots are ' +
+    'searched in one request, so matches are in the top-level entries[] of the result, and that key is ' +
+    'absent when nothing matched. For finding files by name across a large area, nas_search_files is faster.',
   input: {
     roots: nasPaths('Folders to search in.', 20),
     name: z.string().min(1).optional().describe('File name pattern with * and ?, for example *.jpg.'),
@@ -173,8 +174,8 @@ const fileUsage = defineTool({
   toolset: 'file',
   title: 'Disk usage and folder quota',
   description:
-    'kind "du" reports how much space folders occupy, optionally broken down to a given depth; it walks the ' +
-    'tree and can be slow. kind "quota" reports the size limit set on a personal or shared folder: the value is ' +
+    'kind "du" reports how much space folders occupy (items[].entries[] with size, dir_count and ' +
+    'file_count), optionally broken down to a given depth; it walks the tree and can be slow. kind "quota" reports the size limit set on a personal or shared folder: the value is ' +
     'in MB as a string, and "0" means no quota is set, not a quota of zero. Quotas exist only at the level of a ' +
     'personal or shared folder, not on subfolders or volume roots. For free space on a whole volume use ' +
     'nas_storage_info with kind "volumes".',
