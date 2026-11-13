@@ -1,0 +1,43 @@
+{
+  "name": "ugreen-nas-mcp",
+  "version": "0.1.0",
+  "description": "Unofficial MCP server for managing your own UGREEN NAS from any MCP client, built on the official unc CLI",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ugreen",
+    "nas",
+    "ugos",
+    "unc"
+  ],
+  "bin": {
+    "ugreen-nas-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "live-check": "node scripts/live-check.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
