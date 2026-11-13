@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { sizeFilter, timeoutSeconds, unixSeconds } from './schemas.js';
-import { ToolInputError, cmd, csv, defineTool, opt, streamTimeout, type ToolSpec } from './types.js';
+import { ToolInputError, cmd, defineTool, opt, streamTimeout, type ToolSpec } from './types.js';
 
 const nasPath = (what: string) => z.string().min(1).describe(`${what} Absolute NAS path, for example /volume1/docs/report.pdf.`);
 const nasPaths = (what: string, max: number) =>
@@ -265,8 +265,318 @@ const fileTags = defineTool({
   },
 });
 
-// Kept for the write tools that follow.
-void csv;
+// ---------------------------------------------------------------------------------------------
+// Write: additive operations that never overwrite or delete
+// ---------------------------------------------------------------------------------------------
+
+const onConflict = z.enum(['rename', 'skip', 'replace']);
+const utf8Bytes = (s: string) => Buffer.byteLength(s, 'utf8');
+
+const fileMkdir = defineTool({
+  name: 'nas_file_mkdir',
+  toolset: 'file',
+  title: 'Create folders',
+  description:
+    'Create one or more folders on the NAS. Set parents to also create missing parent folders. Folders can only ' +
+    'be created inside a shared folder or the personal folder, not directly under a volume root. This does not ' +
+    'create a new shared folder; that has to be done in the NAS web interface. The result has items[], one per ' +
+    'path; check each for success.',
+  input: {
+    paths: nasPaths('Folders to create.', 20),
+    parents: z.boolean().default(false).describe('Create missing parent folders as well.'),
+  },
+  minRisk: 'write',
+  maxRisk: 'write',
+  risk: () => 'write',
+  nasPaths: (a) => a.paths,
+  build: (a) => ({ argv: cmd(['file', 'mkdir'], [opt('parents', a.parents)], a.paths) }),
+});
+
+const fileCreate = defineTool({
+  name: 'nas_file_create',
+  toolset: 'file',
+  title: 'Create a new file',
+  description:
+    'Create a new file on the NAS with the given content. It fails if the path already exists and never ' +
+    'overwrites; to change an existing file use nas_file_write. Content is limited to 100000 bytes; for larger ' +
+    'or existing local files use nas_file_upload. Set base64 to true to write binary content given as Base64.',
+  input: {
+    path: nasPath('File to create.'),
+    content: z
+      .string()
+      .default('')
+      .refine((s) => utf8Bytes(s) <= 100_000, 'content must be at most 100000 bytes; use nas_file_upload for larger files')
+      .describe('Text content, or Base64 when base64 is true. Empty creates an empty file.'),
+    base64: z.boolean().default(false).describe('Treat content as Base64 and write the decoded bytes.'),
+  },
+  minRisk: 'write',
+  maxRisk: 'write',
+  risk: () => 'write',
+  nasPaths: (a) => [a.path],
+  build: (a) => ({
+    argv: cmd(
+      ['file', 'touch'],
+      ['--exclusive', a.content.length > 0 ? opt('content', a.content) : undefined, a.content.length > 0 && opt('base64', a.base64)],
+      [a.path],
+    ),
+  }),
+});
+
+const fileCopy = defineTool({
+  name: 'nas_file_copy',
+  toolset: 'file',
+  title: 'Copy a file or folder',
+  description:
+    'Copy one file or folder into an existing folder, keeping its name. destination_dir must be a folder that ' +
+    'already exists; it must not include a new file name. To copy and rename, copy first and then rename the ' +
+    'copy with nas_file_move. on_conflict decides what happens when the name is taken: "rename" (default) keeps ' +
+    'both, "skip" leaves the existing one, "replace" overwrites it and therefore needs admin access and a ' +
+    'confirmation.',
+  input: {
+    source: nasPath('File or folder to copy.'),
+    destination_dir: nasPath('Existing folder to copy into.'),
+    on_conflict: onConflict.default('rename').describe('What to do when the name already exists in the destination.'),
+  },
+  minRisk: 'write',
+  maxRisk: 'admin',
+  risk: (a) => (a.on_conflict === 'replace' ? 'admin' : 'write'),
+  nasPaths: (a) => [a.source, a.destination_dir],
+  build: (a) => ({ argv: cmd(['file', 'cp'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination_dir]) }),
+});
+
+const fileRestore = defineTool({
+  name: 'nas_file_restore',
+  toolset: 'file',
+  title: 'Restore from the recycle bin',
+  description:
+    'Restore deleted items to their original location. Pass the path inside the recycle bin, which is the ' +
+    'receipt.final_path returned by nas_file_delete (for example /home/alice/#recycle/a.txt). The recycle bin ' +
+    'is flat: items sit directly in #recycle under their original name, so if the path was not recorded, list ' +
+    'that folder with nas_file_list. Passing the original path instead restores nothing.',
+  input: { recycle_paths: nasPaths('Paths inside a #recycle folder.', 20) },
+  minRisk: 'write',
+  maxRisk: 'write',
+  risk: () => 'write',
+  nasPaths: (a) => a.recycle_paths,
+  build: (a) => ({ argv: cmd(['file', 'recover-recycle'], [], a.recycle_paths) }),
+});
+
+const fileTagEdit = defineTool({
+  name: 'nas_file_tag_edit',
+  toolset: 'file',
+  title: 'Create, apply or remove tags',
+  description:
+    'Change tags. action "create_tag" makes a new tag (needs name; color is optional, #RRGGBB). "tag_files" ' +
+    'puts one tag on the given paths (needs tag_id and paths). "untag_files" removes one tag from the given ' +
+    'paths, and "delete_tags" deletes tags entirely (needs tag_ids); both of these need admin access and a ' +
+    'confirmation. Tag IDs come from nas_file_tags with query "list_tags".',
+  input: {
+    action: z.enum(['create_tag', 'tag_files', 'delete_tags', 'untag_files']).describe('What to change.'),
+    name: z.string().min(1).optional().describe('For "create_tag": the tag name.'),
+    color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/, 'Use #RRGGBB')
+      .optional()
+      .describe('For "create_tag": colour as #RRGGBB. A default blue is used when omitted.'),
+    tag_id: z.number().int().min(1).optional().describe('For "tag_files" and "untag_files": the tag.'),
+    tag_ids: z.array(z.number().int().min(1)).min(1).max(20).optional().describe('For "delete_tags": the tags to delete.'),
+    paths: z.array(z.string().min(1)).min(1).max(50).optional().describe('For "tag_files" and "untag_files": the paths.'),
+  },
+  minRisk: 'write',
+  maxRisk: 'admin',
+  risk: (a) => (a.action === 'delete_tags' || a.action === 'untag_files' ? 'admin' : 'write'),
+  nasPaths: (a) => (a.action === 'tag_files' || a.action === 'untag_files' ? (a.paths ?? []) : []),
+  build: (a) => {
+    switch (a.action) {
+      case 'create_tag':
+        if (!a.name) throw new ToolInputError('"create_tag" needs name.');
+        return { argv: cmd(['file', 'tag', 'add'], [opt('color', a.color ?? '#4C8BF5')], [a.name]) };
+      case 'delete_tags':
+        if (!a.tag_ids) throw new ToolInputError('"delete_tags" needs tag_ids.');
+        return { argv: cmd(['file', 'tag', 'delete'], [], a.tag_ids.map(String)) };
+      default: {
+        if (a.tag_id === undefined || !a.paths) throw new ToolInputError(`"${a.action}" needs tag_id and paths.`);
+        const verb = a.action === 'tag_files' ? 'add' : 'delete';
+        return { argv: cmd(['file', 'tag', 'file', verb], [], [String(a.tag_id), ...a.paths]) };
+      }
+    }
+  },
+});
+
+function requireLocal(ctx: { localPath?: string }): string {
+  if (!ctx.localPath) throw new Error('local path was not resolved');
+  return ctx.localPath;
+}
+
+const fileUpload = defineTool({
+  name: 'nas_file_upload',
+  toolset: 'file',
+  title: 'Upload a local file to the NAS',
+  description:
+    'Send a file from this computer to the NAS. local_path must be inside the local transfer directory the user ' +
+    'configured for this server; other local files cannot be read. End remote_path with "/" to put the file ' +
+    'into that folder under its own name, or give a full target path. If the name exists, the default "rename" ' +
+    'lets the NAS pick a new name, so read data.stat.path for the final name; "replace" overwrites and needs ' +
+    'admin access and a confirmation. There is no resume: a failed upload starts over. Check that ' +
+    'data.bytes_written equals the file size. To make the NAS fetch a URL itself, use nas_download_create.',
+  input: {
+    local_path: z.string().min(1).describe('File inside the local transfer directory, relative to it or absolute.'),
+    remote_path: nasPath('Target on the NAS; end with "/" for a folder.'),
+    on_conflict: onConflict.default('rename').describe('What to do when the target name already exists.'),
+    verify: z.boolean().default(false).describe('Have the NAS verify a SHA-256 of the content before saving.'),
+    timeout_seconds: timeoutSeconds(600),
+  },
+  minRisk: 'write',
+  maxRisk: 'admin',
+  risk: (a) => (a.on_conflict === 'replace' ? 'admin' : 'write'),
+  nasPaths: (a) => [a.remote_path],
+  localPath: (a) => ({ path: a.local_path, mode: 'existing-file' }),
+  build: (a, ctx) => {
+    const st = streamTimeout(a.timeout_seconds);
+    return {
+      argv: cmd(
+        ['file', 'upload'],
+        [opt('on-conflict', a.on_conflict), opt('verify', a.verify), st.flag],
+        [requireLocal(ctx), a.remote_path],
+      ),
+      timeoutMs: st.timeoutMs,
+    };
+  },
+});
+
+const fileDownload = defineTool({
+  name: 'nas_file_download',
+  toolset: 'file',
+  title: 'Download a NAS file to this computer',
+  description:
+    'Copy a file from the NAS to this computer. The file is saved inside the local transfer directory the user ' +
+    'configured for this server; local_path is relative to it and defaults to the remote file name. If the ' +
+    'local file exists the call fails unless if_exists is "overwrite" or "resume" (continue a partial ' +
+    'download). After an interrupted download, call again with "resume" rather than starting over. To only ' +
+    'look at text content use nas_file_read. This is not nas_download_create, which makes the NAS download a URL.',
+  input: {
+    remote_path: nasPath('File on the NAS.'),
+    local_path: z.string().min(1).optional().describe('Where to save it inside the local transfer directory.'),
+    if_exists: z
+      .enum(['fail', 'overwrite', 'resume'])
+      .default('fail')
+      .describe('What to do when the local file already exists.'),
+    timeout_seconds: timeoutSeconds(600),
+  },
+  minRisk: 'write',
+  maxRisk: 'write',
+  risk: () => 'write',
+  nasPaths: (a) => [a.remote_path],
+  localPath: (a) => ({
+    path: a.local_path ?? a.remote_path.split('/').filter((s) => s.length > 0).pop() ?? 'download',
+    mode: 'target',
+  }),
+  build: (a, ctx) => {
+    const st = streamTimeout(a.timeout_seconds);
+    const exists = a.if_exists === 'overwrite' ? '--force' : a.if_exists === 'resume' ? '--continue' : undefined;
+    return { argv: cmd(['file', 'download'], [exists, st.flag], [a.remote_path, requireLocal(ctx)]), timeoutMs: st.timeoutMs };
+  },
+});
+
+// ---------------------------------------------------------------------------------------------
+// Admin: operations that delete, move or overwrite
+// ---------------------------------------------------------------------------------------------
+
+const fileMove = defineTool({
+  name: 'nas_file_move',
+  toolset: 'file',
+  title: 'Move or rename',
+  description:
+    'Move a file or folder into another folder, or rename it in place. destination is either an existing ' +
+    'folder as an absolute path (the item moves there and keeps its name) or a plain new name without "/" ' +
+    '(rename in the same folder). A full target path such as /b/new-name.txt is not accepted: to move and ' +
+    'rename, do it in two calls. on_conflict decides what happens when the name exists in the destination.',
+  input: {
+    source: nasPath('File or folder to move or rename.'),
+    destination: z.string().min(1).describe('Existing folder (absolute path), or a new name without "/".'),
+    on_conflict: onConflict.optional().describe('What to do when the name already exists; omit for the NAS default.'),
+  },
+  minRisk: 'admin',
+  maxRisk: 'admin',
+  risk: () => 'admin',
+  nasPaths: (a) => (a.destination.includes('/') ? [a.source, a.destination] : [a.source]),
+  build: (a) => {
+    if (a.destination.includes('/') && !a.destination.startsWith('/')) {
+      throw new ToolInputError('destination must be an absolute folder path, or a new name without "/".');
+    }
+    return { argv: cmd(['file', 'mv'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination]) };
+  },
+});
+
+const fileDelete = defineTool({
+  name: 'nas_file_delete',
+  toolset: 'file',
+  title: 'Delete files or folders',
+  description:
+    'Delete paths. By default they go to the recycle bin and can be restored: each item returns ' +
+    'data.receipt.final_path, which nas_file_restore needs, so keep it. permanent skips the recycle bin and ' +
+    'cannot be undone; use it only when the user asked for permanent deletion. Shared folder roots cannot be ' +
+    'deleted. Only delete what the user named: do not widen the scope. The result has items[]; report ' +
+    'successes and failures separately, and after a failure check the current state with nas_file_stat instead ' +
+    'of repeating the call.',
+  input: {
+    paths: nasPaths('Paths to delete.', 50),
+    permanent: z.boolean().default(false).describe('Delete permanently instead of moving to the recycle bin.'),
+  },
+  minRisk: 'admin',
+  maxRisk: 'admin',
+  risk: () => 'admin',
+  nasPaths: (a) => a.paths,
+  build: (a) => ({ argv: cmd(['file', 'rm'], [opt('permanent', a.permanent)], a.paths) }),
+  followUp: (a) =>
+    a.permanent
+      ? undefined
+      : 'Deleted items are in the recycle bin. Keep each items[].data.receipt.final_path: nas_file_restore needs it.',
+});
+
+const fileWrite = defineTool({
+  name: 'nas_file_write',
+  toolset: 'file',
+  title: 'Overwrite or append to a file',
+  description:
+    'Write content into a file that already exists. mode "overwrite" (default) replaces the whole content, and ' +
+    'the previous content is lost; "append" adds to the end. The target must exist: to create a file use ' +
+    'nas_file_create. Read the file first with nas_file_read if the user has not seen what will be replaced.',
+  input: {
+    path: nasPath('Existing file to write to.'),
+    content: z
+      .string()
+      .refine((s) => utf8Bytes(s) <= 1_048_576, 'content must be at most 1048576 bytes; use nas_file_upload for larger files')
+      .describe('Text to write.'),
+    mode: z.enum(['overwrite', 'append']).default('overwrite').describe('Replace the content or add to the end.'),
+  },
+  minRisk: 'admin',
+  maxRisk: 'admin',
+  risk: () => 'admin',
+  nasPaths: (a) => [a.path],
+  // Content travels on stdin so it is not visible in the process list and is not limited by argument size.
+  build: (a) => ({ argv: cmd(['file', 'tee'], [opt('append', a.mode === 'append')], [a.path]), stdin: a.content }),
+});
+
+const fileQuotaSet = defineTool({
+  name: 'nas_file_quota_set',
+  toolset: 'file',
+  title: 'Set a folder quota',
+  description:
+    'Set the size limit of a personal or shared folder in MB. 0 removes the quota. The limit takes effect ' +
+    'immediately and writes beyond it fail, so check current usage with nas_file_usage first and confirm the ' +
+    'number with the user. Quotas can only be set on a personal or shared folder itself, not on subfolders or ' +
+    'volume roots.',
+  input: {
+    path: nasPath('Personal or shared folder.'),
+    quota_mb: z.number().int().min(0).describe('Quota in MB; 0 removes it.'),
+  },
+  minRisk: 'admin',
+  maxRisk: 'admin',
+  risk: () => 'admin',
+  nasPaths: (a) => [a.path],
+  build: (a) => ({ argv: cmd(['file', 'quota', 'set'], [opt('quota-mb', a.quota_mb)], [a.path]) }),
+});
 
 export const fileTools: ToolSpec[] = [
   fileRoots,
@@ -277,4 +587,15 @@ export const fileTools: ToolSpec[] = [
   fileUsage,
   fileChecksum,
   fileTags,
+  fileMkdir,
+  fileCreate,
+  fileCopy,
+  fileRestore,
+  fileTagEdit,
+  fileUpload,
+  fileDownload,
+  fileMove,
+  fileDelete,
+  fileWrite,
+  fileQuotaSet,
 ];
