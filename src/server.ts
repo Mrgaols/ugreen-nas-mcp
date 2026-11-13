@@ -102,6 +102,7 @@ export async function executeTool(
 
     const call = spec.build(args, ctx);
     const globals = [call.raw ? '--format=raw' : '--format=json'];
+    if (call.requestTimeoutSeconds !== undefined) globals.push(`--timeout=${call.requestTimeoutSeconds}`);
     const runOpts = { stdin: call.stdin, timeoutMs: call.timeoutMs };
     const token = typeof rawToken === 'string' && rawToken.length > 0 ? rawToken : undefined;
 
@@ -112,13 +113,14 @@ export async function executeTool(
       const env = parseEnvelope(result);
       if (!isSuccess(result, env)) return fail(failureFromUnc(result, env), max);
       const issued = deps.confirm.issue(spec.name, args);
+      // The preview goes last: if the result is cut to the output limit, the token must survive.
       return ok(
         {
           status: 'confirmation_required',
-          preview: env,
           confirm_token: issued.token,
           expires_in_seconds: issued.expiresInSeconds,
           next_step: CONFIRM_NEXT_STEP,
+          preview: env,
         },
         max,
       );
@@ -151,7 +153,8 @@ export async function executeTool(
     let payload: unknown = spec.project ? spec.project(env) : env;
     const nextStep = spec.followUp?.(args);
     if (nextStep && payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
-      payload = { ...(payload as Record<string, unknown>), next_step: nextStep };
+      // Advice first, so it is still there when a large result is cut to the output limit.
+      payload = { next_step: nextStep, ...(payload as Record<string, unknown>) };
     }
     return ok(payload, max);
   } catch (err) {

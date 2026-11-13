@@ -162,3 +162,36 @@ describe('toText / ok / fail', () => {
     expect(JSON.parse((f.content[0] as { text: string }).text)).toEqual({ error: 'boom', hint: 'do x' });
   });
 });
+
+describe('review: timeouts, floods and field order', () => {
+  it('a request that hit unc\'s own deadline gets advice for reads and for changes', () => {
+    const r = res({
+      exitCode: 1,
+      out: JSON.stringify({ success: false, items: [{ success: false, error: '请求 /x 失败: Post "https://nas/x": context deadline exceeded' }] }),
+    });
+    const hint = hintFor(r, parseEnvelope(r)) ?? '';
+    expect(hint).toMatch(/did not answer in time/i);
+    expect(hint).toMatch(/check the current state/i);
+  });
+
+  it('a killed process also warns that a change may have been applied', () => {
+    const r = res({ exitCode: null, timedOut: true });
+    expect(hintFor(r, null)).toMatch(/check the current state/i);
+  });
+
+  it('an output flood is reported as such', () => {
+    const r = res({ exitCode: null, overflow: true, out: '{"success":true,"data":"xxxx' });
+    const f = failureFromUnc(r, parseEnvelope(r));
+    expect(f.error).toMatch(/too much output/i);
+    expect(f.hint).toMatch(/narrow/i);
+    expect(isSuccess(r, null)).toBe(false);
+  });
+
+  it('puts the hint before bulky fields so truncation cannot remove it', () => {
+    const big = { success: false, error: 'PermissionDenied (HTTP 403) code: 1301', items: [{ success: false, blob: 'x'.repeat(5000) }] };
+    const r = res({ exitCode: 1, out: JSON.stringify(big) });
+    const textOut = (fail(failureFromUnc(r, parseEnvelope(r)), 1000).content[0] as { text: string }).text;
+    expect(textOut).toContain('"hint":');
+    expect(textOut).toContain('[truncated');
+  });
+});

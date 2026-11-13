@@ -48,10 +48,12 @@ const nasStatus = defineTool({
 
     const auth = await query(deps.runner, ['auth', 'status', '--check']);
     const unc = await query(deps.runner, ['version']);
-    const body: Record<string, unknown> = { auth, unc };
-    if (args.doctor) body.doctor = await query(deps.runner, ['doctor'], 120_000);
-    body.policy = policy;
+    // Short fields first: the health report can be long enough to be cut off.
+    const body: Record<string, unknown> = { policy };
     if ((auth as { authenticated?: unknown }).authenticated !== true) body.hint = LOGIN_HINT;
+    body.auth = auth;
+    body.unc = unc;
+    if (args.doctor) body.doctor = await query(deps.runner, ['doctor'], 120_000);
     return ok(body, max);
   },
 });

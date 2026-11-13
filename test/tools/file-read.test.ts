@@ -92,7 +92,7 @@ describe('file read tools', () => {
   });
 
   it('gives slow commands a longer timeout', () => {
-    expect(call('nas_file_checksum', { algorithm: 'md5', paths: ['/a'] }).timeoutMs).toBe(300000);
+    expect(call('nas_file_checksum', { algorithm: 'md5', paths: ['/a'] }).timeoutMs).toBe(315000);
     expect(call('nas_file_list', { timeout_seconds: 300 }).timeoutMs).toBe(315000);
   });
 

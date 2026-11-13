@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Envelope } from '../output.js';
 import { assertParamKey } from './schemas.js';
-import { ToolInputError, cmd, defineTool, opt, type ToolSpec } from './types.js';
+import { ToolInputError, cmd, defineTool, opt, requestTimeout, type ToolSpec } from './types.js';
 
 const inputError = (message: string) => new ToolInputError(message);
 const appIds = (max: number) => z.array(z.string().min(1)).min(1).max(max);
@@ -166,7 +166,8 @@ const appManage = defineTool({
         ],
         a.app_ids,
       ),
-      ...(waits ? { timeoutMs: a.wait_timeout_minutes * 60_000 + 30_000 } : {}),
+      // install, update and uninstall wait on the NAS side; start and stop are one synchronous request each.
+      ...(waits ? { timeoutMs: a.wait_timeout_minutes * 60_000 + 30_000 } : requestTimeout(300, a.app_ids.length)),
     };
   },
   followUp: () =>

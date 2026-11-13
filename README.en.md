@@ -128,7 +128,7 @@ With `UGREEN_MCP_ALLOWED_PATHS` set, every path used by the `file` and `search` 
 
 ### Local transfer directory
 
-`nas_file_upload` and `nas_file_download` exist only when `UGREEN_MCP_LOCAL_DIR` is set, and can only read and write files inside that directory. Symbolic links are resolved, so they cannot be used to escape it. The agent therefore cannot use these tools to read or overwrite other files on your computer.
+`nas_file_upload` and `nas_file_download` exist only when `UGREEN_MCP_LOCAL_DIR` is set, and can only read and write files inside that directory. Symbolic links are resolved, so they cannot be used to escape it, and a download target that is itself a symbolic link is refused. The agent therefore cannot use these tools to read or overwrite other files on your computer.
 
 ## Limitations
 
@@ -247,6 +247,8 @@ Not provided: login and token management, creating shared folders, changing file
 **403.** Either the path is not inside a shared folder you can access (a volume root such as `/volume1` is never accessible), or the token lacks the permission node for that method. The second case needs a new token, because the permissions of an existing one cannot be changed.
 
 **"Not available on this NAS".** The package is not installed, not running, or the system version does not support it yet. Retrying does not help; have the agent call `nas_status` with `doctor: true`.
+
+**`context deadline exceeded`, or a command timed out.** The NAS did not answer in time. For a query, narrow the request or raise the tool's `timeout_seconds` (listing, finding, checksums, uploads and downloads have it). If the call changes something, it may have been applied on the NAS anyway: check the current state first instead of repeating it.
 
 **The client complains about too many tools.** Keep only the toolsets you need with `UGREEN_MCP_TOOLSETS`, for example `file,storage,taskmgr`.
 

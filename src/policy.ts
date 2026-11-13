@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 export const RISKS = ['read', 'write', 'admin'] as const;
@@ -64,7 +64,9 @@ export function normalizeNasPath(p: string): string {
 export function assertNasPathAllowed(p: string, allowed: readonly string[]): string {
   const normalized = normalizeNasPath(p);
   if (allowed.length === 0) return normalized;
-  const inside = allowed.some((prefix) => normalized === prefix || normalized.startsWith(prefix + '/'));
+  const inside = allowed.some(
+    (prefix) => prefix === '/' || normalized === prefix || normalized.startsWith(prefix + '/'),
+  );
   if (!inside) {
     throw new PolicyError(
       `NAS path ${JSON.stringify(normalized)} is outside the folders this server is allowed to use (${allowed.join(', ')})`,
@@ -127,5 +129,16 @@ export async function resolveLocalPath(
   if (!(await stat(parent)).isDirectory() || name === '' || name === '.' || name === '..') {
     throw new PolicyError(`Local path is not a valid destination file: ${p}`, LOCAL_HINT);
   }
-  return path.join(parent, name);
+  const target = path.join(parent, name);
+  // An existing link here would send the download wherever it points, so only a plain file may be replaced.
+  let existing: Awaited<ReturnType<typeof lstat>> | null = null;
+  try {
+    existing = await lstat(target);
+  } catch {
+    // nothing there yet
+  }
+  if (existing !== null && !existing.isFile()) {
+    throw new PolicyError(`Local destination exists and is not a regular file: ${p}`, LOCAL_HINT);
+  }
+  return target;
 }

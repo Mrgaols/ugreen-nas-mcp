@@ -128,7 +128,7 @@ npm run build
 
 ### 本机传输目录
 
-`nas_file_upload` 和 `nas_file_download` 只有在设置了 `UGREEN_MCP_LOCAL_DIR` 后才存在，而且只能读写这个目录里的文件（会解析符号链接，防止绕出目录）。这样 agent 无法借它读取或覆盖你电脑上的其他文件。
+`nas_file_upload` 和 `nas_file_download` 只有在设置了 `UGREEN_MCP_LOCAL_DIR` 后才存在，而且只能读写这个目录里的文件（会解析符号链接，防止绕出目录；下载目标如果本身是一个符号链接，会被拒绝）。这样 agent 无法借它读取或覆盖你电脑上的其他文件。
 
 ## 局限
 
@@ -247,6 +247,8 @@ npm run build
 **返回 403。** 分两种情况：访问的路径不在你有权限的共享文件夹里（卷根 `/volume1` 本身不可访问），或者令牌没有勾选这个方法的权限节点。后一种需要在 NAS 上新建令牌，因为已有令牌的权限改不了。
 
 **提示功能在这台 NAS 上不可用。** 对应的套件没装、没运行，或系统版本还不支持。重试没有用，让 agent 调用 `nas_status` 并带 `doctor: true` 看具体原因。
+
+**提示 `context deadline exceeded` 或命令超时。** NAS 没有在限定时间内答复。查询类操作可以缩小范围，或调大工具的 `timeout_seconds`（列目录、查找、校验、上传下载都有这个参数）。如果是修改类操作，它可能已经在 NAS 上生效，先查看当前状态，不要直接重试。
 
 **客户端提示工具太多。** 用 `UGREEN_MCP_TOOLSETS` 只保留需要的工具组，例如 `file,storage,taskmgr`。
 

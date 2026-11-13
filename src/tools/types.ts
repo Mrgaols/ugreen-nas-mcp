@@ -22,6 +22,8 @@ export interface UncCall {
   argv: string[];
   stdin?: string;
   timeoutMs?: number;
+  /** Seconds unc may wait for one request to the NAS; unc's own default is 30. */
+  requestTimeoutSeconds?: number;
   /** Ask unc for raw bytes instead of a JSON envelope. */
   raw?: boolean;
 }
@@ -101,4 +103,17 @@ export function csv(name: string, values: ReadonlyArray<string | number> | undef
 /** The flag for a streaming command, and a process timeout that outlasts it. */
 export function streamTimeout(seconds: number): { flag: string; timeoutMs: number } {
   return { flag: `--stream-timeout=${seconds}`, timeoutMs: (seconds + 15) * 1000 };
+}
+
+const MAX_PROCESS_SECONDS = 1800;
+
+/**
+ * For commands whose single request can outlast unc's default 30 seconds (copying, hashing, restarting).
+ * unc sends one request per target, so the process limit grows with the number of targets, up to a ceiling.
+ */
+export function requestTimeout(seconds: number, requests = 1): { requestTimeoutSeconds: number; timeoutMs: number } {
+  return {
+    requestTimeoutSeconds: seconds,
+    timeoutMs: (Math.min(seconds * requests, MAX_PROCESS_SECONDS) + 15) * 1000,
+  };
 }

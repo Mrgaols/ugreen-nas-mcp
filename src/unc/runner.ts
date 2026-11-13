@@ -6,6 +6,8 @@ export interface UncResult {
   stdout: Buffer;
   stderr: string;
   timedOut: boolean;
+  /** True when the process was stopped because it printed more than the output cap. */
+  overflow?: boolean;
   /** Error code from the operating system when the process could not be started, e.g. ENOENT. */
   spawnError?: string;
 }
@@ -13,17 +15,26 @@ export interface UncResult {
 export type UncRunner = (argv: string[], opts?: { stdin?: string; timeoutMs?: number }) => Promise<UncResult>;
 
 export const DEFAULT_TIMEOUT_MS = 60_000;
+/** Far above any useful result (results are cut to tens of thousands of characters) and far below memory limits. */
+export const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /**
  * Runs the unc binary without a shell, so argument values can never be interpreted as shell syntax.
  * The returned function never rejects: every failure mode is described in the result.
  */
-export function createRunner(uncBin: string, env: NodeJS.ProcessEnv = process.env): UncRunner {
+export function createRunner(
+  uncBin: string,
+  env: NodeJS.ProcessEnv = process.env,
+  limits: { maxOutputBytes?: number } = {},
+): UncRunner {
+  const maxOutputBytes = limits.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return (argv, opts = {}) =>
     new Promise<UncResult>((resolve) => {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
+      let received = 0;
       let timedOut = false;
+      let overflow = false;
       let settled = false;
 
       const child = spawn(uncBin, argv, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
@@ -38,16 +49,28 @@ export function createRunner(uncBin: string, env: NodeJS.ProcessEnv = process.en
         settled = true;
         clearTimeout(timer);
         resolve({
-          exitCode: timedOut ? null : exitCode,
+          exitCode: timedOut || overflow ? null : exitCode,
           stdout: Buffer.concat(stdout),
           stderr: Buffer.concat(stderr).toString('utf8'),
           timedOut,
+          ...(overflow ? { overflow } : {}),
           ...(spawnError ? { spawnError } : {}),
         });
       };
 
-      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      // A listing without a limit can be gigabytes; buffering it would take the whole server down.
+      const collect = (into: Buffer[]) => (chunk: Buffer) => {
+        if (overflow) return;
+        received += chunk.length;
+        if (received > maxOutputBytes) {
+          overflow = true;
+          child.kill('SIGKILL');
+          return;
+        }
+        into.push(chunk);
+      };
+      child.stdout.on('data', collect(stdout));
+      child.stderr.on('data', collect(stderr));
       child.on('error', (err: NodeJS.ErrnoException) => finish(null, err.code ?? 'UNKNOWN'));
       child.on('close', (code) => finish(code));
 

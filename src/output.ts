@@ -23,9 +23,23 @@ export const LOGIN_HINT =
   'unc is not logged in to a NAS. Ask the user to set UNC_NAS_URL and UNC_NAS_TOKEN in the MCP server ' +
   'configuration, or to run `unc auth login` in a terminal. Do not ask the user to paste the token into the chat.';
 
+const CHECK_STATE =
+  'If this call changes something on the NAS, it may have been applied anyway: check the current state with ' +
+  'the matching read tool before repeating it.';
+
 const TIMEOUT_HINT =
-  'The command did not finish in time and any partial result is incomplete. Narrow the request (a deeper path, ' +
-  'no recursion, a lower limit) or raise timeout_seconds, then try again.';
+  'The command did not finish in time and any partial result is incomplete. For a query, narrow the request ' +
+  '(a deeper path, no recursion, a lower limit) or raise timeout_seconds where the tool has it. ' +
+  CHECK_STATE;
+
+const DEADLINE_HINT =
+  'The NAS did not answer in time. For a query, try again with fewer or smaller targets, or raise ' +
+  'timeout_seconds where the tool has it. ' +
+  CHECK_STATE;
+
+const OVERFLOW_HINT =
+  'Narrow the request: a deeper path, no recursion, a filter, or a lower limit. An unlimited listing of a ' +
+  'large folder cannot be returned in one call.';
 
 const UNAVAILABLE_HINT =
   'This feature is not available on this NAS. Do not retry. Read error_detail or compatibility_hint for the ' +
@@ -66,7 +80,7 @@ export function parseEnvelope(r: UncResult): Envelope | null {
 }
 
 export function isSuccess(r: UncResult, env: Envelope | null): boolean {
-  return r.exitCode === 0 && !r.timedOut && !r.spawnError && env !== null && env.success !== false;
+  return r.exitCode === 0 && !r.timedOut && !r.overflow && !r.spawnError && env !== null && env.success !== false;
 }
 
 function items(env: Envelope | null): Envelope[] {
@@ -83,6 +97,7 @@ function hasCompatibilityField(env: Envelope | null): boolean {
 export function hintFor(r: UncResult, env: Envelope | null): string | undefined {
   if (r.spawnError) return INSTALL_HINT;
   if (r.timedOut) return TIMEOUT_HINT;
+  if (r.overflow) return OVERFLOW_HINT;
   if (hasCompatibilityField(env)) return UNAVAILABLE_HINT;
 
   const text = [env?.error, ...items(env).map((i) => i.error), r.stderr]
@@ -94,6 +109,7 @@ export function hintFor(r: UncResult, env: Envelope | null): string | undefined 
     return text.includes('code: 1301') ? PATH_HINT : SCOPE_HINT;
   }
   if (text.includes('HTTP 429')) return RATE_HINT;
+  if (text.includes('context deadline exceeded')) return DEADLINE_HINT;
   return undefined;
 }
 
@@ -104,6 +120,8 @@ export function failureFromUnc(r: UncResult, env: Envelope | null): Failure {
     error = `The unc CLI could not be started (${r.spawnError}).`;
   } else if (r.timedOut) {
     error = 'The unc command timed out and was stopped.';
+  } else if (r.overflow) {
+    error = 'The unc command produced too much output and was stopped.';
   } else if (typeof env?.error === 'string' && env.error.length > 0) {
     error = env.error;
   } else if (stderr.length > 0) {
@@ -113,15 +131,16 @@ export function failureFromUnc(r: UncResult, env: Envelope | null): Failure {
     error = `unc produced unexpected output (exit code ${r.exitCode})${head ? ': ' + head : '.'}`;
   }
 
+  // The hint goes right after the error, so it survives when a bulky result is cut to the output limit.
   const failure: Failure = { error };
+  const hint = hintFor(r, env);
+  if (hint) failure.hint = hint;
   if (env) {
     if (Array.isArray(env.items)) failure.result = env;
     if (env.error_detail != null) failure.error_detail = env.error_detail;
     if (env.compatibility_hint != null) failure.compatibility_hint = env.compatibility_hint;
     if (env.warnings != null) failure.warnings = env.warnings;
   }
-  const hint = hintFor(r, env);
-  if (hint) failure.hint = hint;
   return failure;
 }
 

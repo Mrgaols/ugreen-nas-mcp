@@ -124,3 +124,11 @@ describe('docker tools', () => {
     }
   });
 });
+
+describe('review: synchronous docker operations', () => {
+  it('get a longer unc request timeout', () => {
+    expect(tool('nas_docker_app_rebuild')).toBeDefined();
+    expect(call('nas_docker_app_rebuild', { app_id: 'a.b' })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 315_000 });
+    expect(call('nas_docker_container_control', { action: 'restart', container_ids: ['a', 'b'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
+  });
+});

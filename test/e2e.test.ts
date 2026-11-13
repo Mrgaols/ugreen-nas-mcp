@@ -97,7 +97,7 @@ describe('stdio end to end', () => {
     const done = body(
       await c.callTool({ name: 'nas_file_delete', arguments: { paths: ['/home/u/a.txt'], confirm_token: preview.confirm_token } }),
     );
-    expect(done.argv).toEqual(['--format=json', '--yes', 'file', 'rm', '--', '/home/u/a.txt']);
+    expect(done.argv).toEqual(['--format=json', '--timeout=300', '--yes', 'file', 'rm', '--', '/home/u/a.txt']);
   });
 
   it('keeps secrets out of the unc argument list', async () => {

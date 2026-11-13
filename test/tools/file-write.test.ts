@@ -138,3 +138,22 @@ describe('file write tools', () => {
     expect(tool('nas_file_delete').followUp!(parse('nas_file_delete', { paths: ['/a'], permanent: true }))).toBeUndefined();
   });
 });
+
+describe('review: slow requests and rename targets', () => {
+  it('gives data-sized operations a longer unc request timeout', () => {
+    expect(tool('nas_file_copy')).toBeDefined();
+    expect(call('nas_file_copy', { source: '/a/x', destination_dir: '/b' })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 315_000 });
+    expect(call('nas_file_move', { source: '/a/x', destination: '/b' })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 315_000 });
+    expect(call('nas_file_delete', { paths: ['/a/x', '/a/y', '/a/z'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 915_000 });
+  });
+
+  it('lets the caller raise the checksum timeout and scales it per file', () => {
+    expect(call('nas_file_checksum', { algorithm: 'sha256', paths: ['/a', '/b'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
+    expect(call('nas_file_checksum', { algorithm: 'sha256', paths: ['/a'], timeout_seconds: 900 })).toMatchObject({ requestTimeoutSeconds: 900, timeoutMs: 915_000 });
+  });
+
+  it('refuses "." and ".." as a new name', () => {
+    expect(() => call('nas_file_move', { source: '/a/x', destination: '..' })).toThrowError(ToolInputError);
+    expect(() => call('nas_file_move', { source: '/a/x', destination: '.' })).toThrowError(ToolInputError);
+  });
+});

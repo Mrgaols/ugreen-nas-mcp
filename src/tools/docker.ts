@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { assertParamKey, sortOrder } from './schemas.js';
-import { ToolInputError, cmd, csv, defineTool, opt, type ToolSpec } from './types.js';
+import { ToolInputError, cmd, csv, defineTool, opt, requestTimeout, type ToolSpec } from './types.js';
+
+/** Seconds allowed for one synchronous start, stop, restart or rebuild. */
+const SLOW_REQUEST_SECONDS = 300;
 
 const inputError = (message: string) => new ToolInputError(message);
 
@@ -246,7 +249,10 @@ const dockerContainerControl = defineTool({
   minRisk: 'admin',
   maxRisk: 'admin',
   risk: () => 'admin',
-  build: (a) => ({ argv: cmd(['docker', a.action], [], a.container_ids) }),
+  build: (a) => ({
+    argv: cmd(['docker', a.action], [], a.container_ids),
+    ...requestTimeout(SLOW_REQUEST_SECONDS, a.container_ids.length),
+  }),
 });
 
 const dockerProjectControl = defineTool({
@@ -348,7 +354,10 @@ const dockerAppRebuild = defineTool({
       if (Array.isArray(p.value)) return `--param-multi=${p.key}=${p.value.join(',')}`;
       return p.kind === 'path' ? `--param-path=${p.key}=${p.value}` : `--param=${p.key}=${p.value}`;
     });
-    return { argv: cmd(['docker', 'rebuild'], [opt('path', a.path), ...params], [a.app_id]) };
+    return {
+      argv: cmd(['docker', 'rebuild'], [opt('path', a.path), ...params], [a.app_id]),
+      ...requestTimeout(SLOW_REQUEST_SECONDS),
+    };
   },
   followUp: () => 'Verify with nas_docker_containers that the app is running again; its container ID has changed.',
 });

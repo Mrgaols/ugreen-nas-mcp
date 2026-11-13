@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { sizeFilter, timeoutSeconds, unixSeconds } from './schemas.js';
-import { ToolInputError, cmd, defineTool, opt, streamTimeout, type ToolSpec } from './types.js';
+import { ToolInputError, cmd, defineTool, opt, requestTimeout, streamTimeout, type ToolSpec } from './types.js';
+
+/** Seconds allowed for one request whose duration grows with the amount of data. */
+const SLOW_REQUEST_SECONDS = 300;
 
 const nasPath = (what: string) => z.string().min(1).describe(`${what} Absolute NAS path, for example /volume1/docs/report.pdf.`);
 const nasPaths = (what: string, max: number) =>
@@ -207,10 +210,12 @@ const fileChecksum = defineTool({
   title: 'File checksum',
   description:
     'Compute the MD5 or SHA-256 checksum of files on the NAS, for example to verify a transfer. The NAS reads ' +
-    'each whole file, so large files take a while. The result has items[], one per path; check each for success.',
+    'each whole file, so large files take a while: timeout_seconds applies to each file, and a file that needs ' +
+    'longer fails with "context deadline exceeded". The result has items[], one per path; check each for success.',
   input: {
     algorithm: z.enum(['md5', 'sha256']).describe('Checksum algorithm.'),
     paths: nasPaths('Files to hash.', 20),
+    timeout_seconds: timeoutSeconds(SLOW_REQUEST_SECONDS),
   },
   minRisk: 'read',
   maxRisk: 'read',
@@ -218,7 +223,7 @@ const fileChecksum = defineTool({
   nasPaths: (a) => a.paths,
   build: (a) => ({
     argv: cmd(['file', a.algorithm === 'md5' ? 'md5sum' : 'sha256sum'], [], a.paths),
-    timeoutMs: 300_000,
+    ...requestTimeout(a.timeout_seconds, a.paths.length),
   }),
 });
 
@@ -342,7 +347,10 @@ const fileCopy = defineTool({
   maxRisk: 'admin',
   risk: (a) => (a.on_conflict === 'replace' ? 'admin' : 'write'),
   nasPaths: (a) => [a.source, a.destination_dir],
-  build: (a) => ({ argv: cmd(['file', 'cp'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination_dir]) }),
+  build: (a) => ({
+    argv: cmd(['file', 'cp'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination_dir]),
+    ...requestTimeout(SLOW_REQUEST_SECONDS),
+  }),
 });
 
 const fileRestore = defineTool({
@@ -505,7 +513,13 @@ const fileMove = defineTool({
     if (a.destination.includes('/') && !a.destination.startsWith('/')) {
       throw new ToolInputError('destination must be an absolute folder path, or a new name without "/".');
     }
-    return { argv: cmd(['file', 'mv'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination]) };
+    if (a.destination === '.' || a.destination === '..') {
+      throw new ToolInputError('destination must be a real name or an absolute folder path, not "." or "..".');
+    }
+    return {
+      argv: cmd(['file', 'mv'], [opt('on-conflict', a.on_conflict)], [a.source, a.destination]),
+      ...requestTimeout(SLOW_REQUEST_SECONDS),
+    };
   },
 });
 
@@ -528,7 +542,10 @@ const fileDelete = defineTool({
   maxRisk: 'admin',
   risk: () => 'admin',
   nasPaths: (a) => a.paths,
-  build: (a) => ({ argv: cmd(['file', 'rm'], [opt('permanent', a.permanent)], a.paths) }),
+  build: (a) => ({
+    argv: cmd(['file', 'rm'], [opt('permanent', a.permanent)], a.paths),
+    ...requestTimeout(SLOW_REQUEST_SECONDS, a.paths.length),
+  }),
   followUp: (a) =>
     a.permanent
       ? undefined

@@ -10,6 +10,7 @@ import {
   opt,
   csv,
   streamTimeout,
+  requestTimeout,
   ToolInputError,
   type Deps,
   type ToolSpec,
@@ -384,5 +385,64 @@ describe('buildServer', () => {
     const done = await client.callTool({ name: 'nas_t_admin', arguments: { paths: ['/a/x'], confirm_token: token } });
     expect(done.isError).toBeFalsy();
     expect(calls.at(-1)!.argv).toContain('--yes');
+  });
+});
+
+describe('review: request timeout and truncation-safe results', () => {
+  const slowAdmin = defineTool({
+    name: 'nas_t_slow',
+    toolset: 'file',
+    title: 's',
+    description: 'd',
+    input: { paths: z.array(z.string()) },
+    minRisk: 'admin',
+    maxRisk: 'admin',
+    risk: () => 'admin',
+    build: (a) => ({ argv: cmd(['file', 'rm'], [], a.paths), ...requestTimeout(300, a.paths.length) }),
+    followUp: () => 'verify afterwards',
+  });
+
+  it('requestTimeout scales the process limit with the number of requests, up to a ceiling', () => {
+    expect(requestTimeout(300)).toEqual({ requestTimeoutSeconds: 300, timeoutMs: 315_000 });
+    expect(requestTimeout(300, 2)).toEqual({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
+    expect(requestTimeout(300, 50)).toEqual({ requestTimeoutSeconds: 300, timeoutMs: 1_815_000 });
+  });
+
+  it('passes --timeout to unc for the preview and for the real run', async () => {
+    const d = deps({ UGREEN_MCP_ACCESS: 'admin' });
+    const token = text(await executeTool(slowAdmin, { paths: ['/a/x'] }, d)).confirm_token;
+    await executeTool(slowAdmin, { paths: ['/a/x'], confirm_token: token }, d);
+    expect(calls[0].argv).toEqual(['--format=json', '--timeout=300', '--dry-run', 'file', 'rm', '--', '/a/x']);
+    expect(calls[1].argv).toEqual(['--format=json', '--timeout=300', '--yes', 'file', 'rm', '--', '/a/x']);
+    expect(calls[1].timeoutMs).toBe(315_000);
+  });
+
+  it('keeps confirm_token readable when the preview is larger than the output limit', async () => {
+    const d = deps({ UGREEN_MCP_ACCESS: 'admin', UGREEN_MCP_MAX_OUTPUT_CHARS: '1000' }, () =>
+      reply({ success: true, dry_run: true, blob: 'x'.repeat(5000) }),
+    );
+    const r = await executeTool(slowAdmin, { paths: ['/a/x'] }, d);
+    const raw = (r.content[0] as { text: string }).text;
+    expect(raw).toContain('[truncated');
+    expect(raw).toMatch(/"confirm_token":"[0-9a-f]{12}"/);
+    expect(raw).toContain('"next_step":');
+  });
+
+  it('keeps next_step readable when the result is larger than the output limit', async () => {
+    const d = deps({ UGREEN_MCP_ACCESS: 'admin', UGREEN_MCP_MAX_OUTPUT_CHARS: '1000' }, () =>
+      reply({ success: true, blob: 'x'.repeat(5000) }),
+    );
+    const first = await executeTool(slowAdmin, { paths: ['/a/x'] }, d);
+    const t = /"confirm_token":"([0-9a-f]{12})"/.exec((first.content[0] as { text: string }).text)![1];
+    const done = await executeTool(slowAdmin, { paths: ['/a/x'], confirm_token: t }, d);
+    expect((done.content[0] as { text: string }).text).toContain('"next_step":"verify afterwards"');
+  });
+
+  it('nas_status keeps the policy readable when the health report is huge', async () => {
+    const d = deps({ UGREEN_MCP_MAX_OUTPUT_CHARS: '1000' }, () => reply({ success: true, authenticated: true, blob: 'x'.repeat(5000) }));
+    const r = await executeTool(coreTools[0], { doctor: true }, d);
+    const raw = (r.content[0] as { text: string }).text;
+    expect(raw).toContain('[truncated');
+    expect(raw).toContain('"policy":{"access":"read"');
   });
 });

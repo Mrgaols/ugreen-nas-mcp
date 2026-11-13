@@ -69,7 +69,7 @@ describe('app and storage tools', () => {
   it('waits for long-running app operations', () => {
     expect(call('nas_app_manage', { action: 'install', app_ids: ['a'], install_path: '/volume1' }).timeoutMs).toBe(1_830_000);
     expect(call('nas_app_manage', { action: 'update', app_ids: ['a'], wait_timeout_minutes: 5 }).timeoutMs).toBe(330_000);
-    expect(call('nas_app_manage', { action: 'stop', app_ids: ['a'] }).timeoutMs).toBeUndefined();
+    expect(call('nas_app_manage', { action: 'stop', app_ids: ['a'] }).timeoutMs).toBe(315_000);
   });
 
   it('projects the app list to compact entries', () => {
@@ -137,5 +137,13 @@ describe('app and storage tools', () => {
     expect([tool('nas_app_manage').toolset, tool('nas_app_manage').minRisk, tool('nas_app_manage').maxRisk]).toEqual(['app', 'admin', 'admin']);
     expect([tool('nas_app_list').minRisk, tool('nas_app_list').maxRisk]).toEqual(['read', 'read']);
     expect(tool('nas_app_manage').followUp!(parse('nas_app_manage', { action: 'install', app_ids: ['a'] }))).toContain('nas_app_get');
+  });
+});
+
+describe('review: synchronous app start and stop', () => {
+  it('get a longer unc request timeout, while waiting actions keep their own', () => {
+    expect(tool('nas_app_manage')).toBeDefined();
+    expect(call('nas_app_manage', { action: 'start', app_ids: ['a', 'b'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
+    expect(call('nas_app_manage', { action: 'install', app_ids: ['a'], install_path: '/volume1' }).requestTimeoutSeconds).toBeUndefined();
   });
 });

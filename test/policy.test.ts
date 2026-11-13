@@ -103,3 +103,28 @@ describe('resolveLocalPath', () => {
     });
   });
 });
+
+describe('review: allowlist root and symlinked download targets', () => {
+  it('treats "/" in the allowlist as every path', () => {
+    expect(assertNasPathAllowed('/volume1/docs/a.txt', ['/'])).toBe('/volume1/docs/a.txt');
+  });
+
+  it('refuses a download target that is a symlink, dangling or not', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'nasmcp-link-')));
+    const dir = path.join(root, 'share');
+    const outside = path.join(root, 'outside');
+    await mkdir(dir);
+    await mkdir(outside);
+    await writeFile(path.join(outside, 'victim.txt'), 'v');
+    await symlink(path.join(outside, 'victim.txt'), path.join(dir, 'existing-link'));
+    await symlink(path.join(outside, 'not-there-yet'), path.join(dir, 'dangling-link'));
+    await writeFile(path.join(dir, 'plain.bin'), 'p');
+    try {
+      await expect(resolveLocalPath('existing-link', dir, 'target')).rejects.toThrowError(PolicyError);
+      await expect(resolveLocalPath('dangling-link', dir, 'target')).rejects.toThrowError(PolicyError);
+      expect(await resolveLocalPath('plain.bin', dir, 'target')).toBe(path.join(dir, 'plain.bin'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

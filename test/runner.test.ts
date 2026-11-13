@@ -98,3 +98,21 @@ describe('locateUnc', () => {
     expect(await locateUnc(null, { PATH: root, HOME: path.join(root, 'nohome') })).toBeNull();
   });
 });
+
+describe('review: output cap', () => {
+  it('stops a process that floods stdout and says so', async () => {
+    const runner = createRunner(FAKE, { ...process.env, FAKE_UNC_MODE: 'big' }, { maxOutputBytes: 1_000_000 });
+    const r = await runner(['x']);
+    expect(r.overflow).toBe(true);
+    expect(r.exitCode).toBeNull();
+    expect(r.timedOut).toBe(false);
+    expect(r.stdout.length).toBeLessThan(5_000_000);
+  });
+
+  it('leaves output below the cap alone', async () => {
+    const runner = createRunner(FAKE, { ...process.env, FAKE_UNC_MODE: 'big' }, { maxOutputBytes: 8_000_000 });
+    const r = await runner(['x']);
+    expect(r.overflow).toBeUndefined();
+    expect(r.exitCode).toBe(0);
+  });
+});
