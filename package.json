@@ -4,6 +4,14 @@
   "description": "Unofficial MCP server for managing your own UGREEN NAS from any MCP client, built on the official unc CLI",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mrgaols/ugreen-nas-mcp.git"
+  },
+  "homepage": "https://github.com/Mrgaols/ugreen-nas-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Mrgaols/ugreen-nas-mcp/issues"
+  },
   "keywords": [
     "mcp",
     "model-context-protocol",

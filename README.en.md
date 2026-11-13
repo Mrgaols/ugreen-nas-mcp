@@ -74,7 +74,7 @@ args = ["-y", "ugreen-nas-mcp"]
 ### Running from source
 
 ```bash
-git clone <this repository>
+git clone https://github.com/Mrgaols/ugreen-nas-mcp.git
 cd ugreen-nas-mcp
 npm install
 npm run build
