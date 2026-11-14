@@ -1,6 +1,6 @@
 {
   "name": "ugreen-nas-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial MCP server for managing your own UGREEN NAS from any MCP client, built on the official unc CLI",
   "type": "module",
   "license": "MIT",
