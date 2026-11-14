@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Envelope } from '../output.js';
-import { assertParamKey } from './schemas.js';
+import { assertParamKey, joinMultiValue } from './schemas.js';
 import { ToolInputError, cmd, defineTool, opt, requestTimeout, type ToolSpec } from './types.js';
 
 const inputError = (message: string) => new ToolInputError(message);
@@ -125,7 +125,7 @@ const appManage = defineTool({
       .array(z.object({ key: z.string().min(1), value: z.union([z.string(), z.array(z.string()).min(1)]) }))
       .max(50)
       .optional()
-      .describe('For "install": parameters as { key, value }; value may be a list.'),
+      .describe('For "install": parameters as { key, value }; value may be a list, whose entries must not contain a comma.'),
     no_start: z.boolean().default(false).describe('For "install" and "update": do not start the app afterwards.'),
     clean_data: z.boolean().default(false).describe('For "uninstall": also delete the app data. Irreversible.'),
     wait_timeout_minutes: z
@@ -151,7 +151,9 @@ const appManage = defineTool({
     }
     const params = (a.params ?? []).map((p) => {
       assertParamKey(p.key, inputError);
-      return Array.isArray(p.value) ? `--param-multi=${p.key}=${p.value.join(',')}` : `--param=${p.key}=${p.value}`;
+      return Array.isArray(p.value)
+        ? `--param-multi=${p.key}=${joinMultiValue(p.key, p.value, inputError)}`
+        : `--param=${p.key}=${p.value}`;
     });
     const waits = a.action === 'install' || a.action === 'update' || a.action === 'uninstall';
     return {

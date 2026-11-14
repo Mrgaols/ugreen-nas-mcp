@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Stand-in for the real `unc` binary in tests. Behaviour is selected with FAKE_UNC_MODE.
+import { writeFileSync } from 'node:fs';
+
 const mode = process.env.FAKE_UNC_MODE || 'echo';
 
 async function readStdin() {
@@ -22,6 +24,7 @@ switch (mode) {
     process.stdout.write('not json at all\n');
     break;
   case 'hang':
+    if (process.env.FAKE_UNC_PIDFILE) writeFileSync(process.env.FAKE_UNC_PIDFILE, String(process.pid));
     setTimeout(() => {}, 60_000);
     break;
   case 'big':

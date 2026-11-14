@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { assertParamKey, sortOrder } from './schemas.js';
+import { assertParamKey, joinMultiValue, sortOrder } from './schemas.js';
 import { ToolInputError, cmd, csv, defineTool, opt, requestTimeout, type ToolSpec } from './types.js';
 
 /** Seconds allowed for one synchronous start, stop, restart or rebuild. */
@@ -166,6 +166,7 @@ const dockerCheck = defineTool({
   minRisk: 'read',
   maxRisk: 'read',
   risk: () => 'read',
+  nasPaths: (a) => (a.kind === 'dir' && a.dir ? [a.dir] : []),
   build: (a) => {
     if (a.kind === 'port') {
       if (a.port === undefined) throw new ToolInputError('kind "port" needs port.');
@@ -298,7 +299,11 @@ const dockerProjectCreate = defineTool({
   input: {
     name: z.string().min(1).describe('Project name.'),
     path: z.string().min(1).describe('Existing NAS folder for the project, for example /volume1/docker/blog.'),
-    compose_yaml: z.string().min(1).describe('The full docker-compose YAML.'),
+    compose_yaml: z
+      .string()
+      .min(1)
+      .refine((s) => Buffer.byteLength(s, 'utf8') <= 1_048_576, 'compose_yaml must be at most 1048576 bytes')
+      .describe('The full docker-compose YAML (at most 1 MiB).'),
     run: z.boolean().default(false).describe('Start the project right after creating it.'),
     latest_images: z.boolean().default(false).describe('Pull the newest images.'),
   },
@@ -314,6 +319,8 @@ const dockerProjectCreate = defineTool({
       opt('latest-images', a.latest_images),
     ]),
     stdin: a.compose_yaml,
+    // Creating containers, and pulling images with latest_images, can outlast unc's default 30 seconds.
+    ...requestTimeout(SLOW_REQUEST_SECONDS),
   }),
   followUp: () => 'Verify with nas_docker_projects that the project exists and has the expected status.',
 });
@@ -343,7 +350,7 @@ const dockerAppRebuild = defineTool({
       )
       .max(50)
       .optional()
-      .describe('Parameters as { key, value }; value may be a list; kind "path" marks a NAS path.'),
+      .describe('Parameters as { key, value }; value may be a list, whose entries must not contain a comma; kind "path" marks a NAS path.'),
   },
   minRisk: 'admin',
   maxRisk: 'admin',
@@ -351,7 +358,7 @@ const dockerAppRebuild = defineTool({
   build: (a) => {
     const params = (a.params ?? []).map((p) => {
       assertParamKey(p.key, inputError);
-      if (Array.isArray(p.value)) return `--param-multi=${p.key}=${p.value.join(',')}`;
+      if (Array.isArray(p.value)) return `--param-multi=${p.key}=${joinMultiValue(p.key, p.value, inputError)}`;
       return p.kind === 'path' ? `--param-path=${p.key}=${p.value}` : `--param=${p.key}=${p.value}`;
     });
     return {

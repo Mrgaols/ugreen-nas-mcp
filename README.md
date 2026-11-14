@@ -17,7 +17,7 @@ server 只做两件事：把 `unc` 的命令映射成带参数校验的 MCP 工�
 ## 前置条件
 
 1. **Node.js 20 或更高。**
-2. **已安装 `unc`**（绿联 UGOS Pro 开放 CLI 的官方命令行工具），按绿联官方说明安装。装好后在终端运行 `unc version` 应能看到版本号。
+2. **已安装 `unc`**（绿联 UGOS Pro 开放 CLI 的官方命令行工具），按绿联官方说明安装。装好后在终端运行 `unc version` 应能看到版本号。Windows 上需要真正的 `unc.exe`，不支持 `.cmd` 或 `.bat` 包装脚本。
 3. **一个访问令牌**，在 NAS 的控制面板里创建，以 `ugpoa_v1.` 开头。创建时按需勾选权限节点：令牌只能调用被授权的方法，且创建后权限不能修改。应用的安装与卸载需要管理员签发的令牌。
 
 ## 快速开始
@@ -97,7 +97,7 @@ npm run build
 | `UGREEN_MCP_ALLOWED_PATHS` | 不限 | 允许访问的 NAS 文件夹，逗号分隔，如 `/volume1/docs,/home/alice` |
 | `UGREEN_MCP_LOCAL_DIR` | 未设 | 上传、下载可以读写的本机目录。不设则没有上传、下载工具 |
 | `UGREEN_MCP_UNC_BIN` | 自动查找 | `unc` 的完整路径。默认先找 `PATH`，再找 `~/.local/bin/unc` |
-| `UGREEN_MCP_MAX_OUTPUT_CHARS` | `60000` | 单次返回的字符上限，超出部分截断 |
+| `UGREEN_MCP_MAX_OUTPUT_CHARS` | `60000` | 单次返回的字符上限。超出时返回 `{"truncated": true, "partial": "…"}`，`partial` 是结果的开头部分 |
 
 ## 权限模型
 
@@ -109,7 +109,7 @@ npm run build
 |---|---|---|
 | `read`（默认） | 只读查询 | 25 |
 | `write` | 另加「只新增、不覆盖、不中断服务」的操作：建目录、建新文件、复制、从回收站恢复、打标签、创建和暂停下载任务、拉取镜像 | 33（配置了本机目录时 35） |
-| `admin` | 另加删除、移动、覆盖、改配额、启停容器与应用、创建和删除 Compose 项目、安装和卸载应用、创建用户 | 44（配置了本机目录时 46） |
+| `admin` | 另加删除、移动、覆盖、改配额、启停容器与应用、创建和删除 Compose 项目、安装和卸载应用、创建用户 | 45（配置了本机目录时 47） |
 
 超出当前级别的工具不会注册，agent 看不到也调不了。有些工具的风险取决于参数，例如 `nas_file_copy` 默认属于 `write`，带 `on_conflict: "replace"` 就属于 `admin`。
 
@@ -124,7 +124,7 @@ npm run build
 
 ### 路径白名单
 
-设置 `UGREEN_MCP_ALLOWED_PATHS` 后，`file` 和 `search` 两组工具的所有路径都必须落在这些文件夹内，`nas_download_create` 的保存目录也一样。原本可以不给路径的调用（如列出个人文件夹）此时必须显式给出路径。
+设置 `UGREEN_MCP_ALLOWED_PATHS` 后，`file` 和 `search` 两组工具的所有路径都必须落在这些文件夹内，`nas_download_create` 的保存目录和 `nas_docker_check` 检查的目录也一样。原本可以不给路径的调用（如列出个人文件夹）此时必须显式给出路径。
 
 ### 本机传输目录
 
@@ -143,7 +143,7 @@ npm run build
 
 ## 工具清单
 
-共 46 个。风险一栏是该工具的最低级别；标注「→ admin」的表示某些参数会把它提升到 `admin`。
+共 47 个。风险一栏是该工具的最低级别；标注「→ admin」的表示某些参数会把它提升到 `admin`。
 
 ### 核心
 
@@ -218,7 +218,8 @@ npm run build
 
 | 工具 | 风险 | 说明 |
 |---|---|---|
-| `nas_storage_info` | read → admin | 磁盘、存储池、存储卷；SMART 原始数据属于 admin |
+| `nas_storage_info` | read | 磁盘、存储池、存储卷的状态与容量 |
+| `nas_storage_smart` | admin | 磁盘的 SMART 原始数据（只读取，但属于敏感诊断信息） |
 
 ### ctl
 

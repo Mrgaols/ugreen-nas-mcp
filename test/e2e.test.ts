@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,9 @@ const ENTRY = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const count = (env: NodeJS.ProcessEnv) => enabledTools(loadConfig(env), ALL_TOOLS).length;
 
 describe('tool catalogue', () => {
-  it('has 46 uniquely named, documented tools', () => {
-    expect(ALL_TOOLS).toHaveLength(46);
-    expect(new Set(ALL_TOOLS.map((t) => t.name)).size).toBe(46);
+  it('has 47 uniquely named, documented tools', () => {
+    expect(ALL_TOOLS).toHaveLength(47);
+    expect(new Set(ALL_TOOLS.map((t) => t.name)).size).toBe(47);
     for (const t of ALL_TOOLS) {
       expect(t.name).toMatch(/^nas_[a-z_]+$/);
       expect(t.title.length, t.name).toBeGreaterThan(3);
@@ -31,8 +31,8 @@ describe('tool catalogue', () => {
     expect(count({})).toBe(25);
     expect(count({ UGREEN_MCP_ACCESS: 'write' })).toBe(33);
     expect(count({ UGREEN_MCP_ACCESS: 'write', UGREEN_MCP_LOCAL_DIR: '/tmp' })).toBe(35);
-    expect(count({ UGREEN_MCP_ACCESS: 'admin' })).toBe(44);
-    expect(count({ UGREEN_MCP_ACCESS: 'admin', UGREEN_MCP_LOCAL_DIR: '/tmp' })).toBe(46);
+    expect(count({ UGREEN_MCP_ACCESS: 'admin' })).toBe(45);
+    expect(count({ UGREEN_MCP_ACCESS: 'admin', UGREEN_MCP_LOCAL_DIR: '/tmp' })).toBe(47);
     expect(count({ UGREEN_MCP_TOOLSETS: 'file' })).toBe(9);
     expect(count({ UGREEN_MCP_TOOLSETS: 'network,taskmgr' })).toBe(3);
   });
@@ -89,7 +89,7 @@ describe('stdio end to end', () => {
 
   it('runs the two-step confirmation over the wire', async () => {
     const c = await connect({ UGREEN_MCP_ACCESS: 'admin' });
-    expect((await c.listTools()).tools).toHaveLength(44);
+    expect((await c.listTools()).tools).toHaveLength(45);
     const preview = body(await c.callTool({ name: 'nas_file_delete', arguments: { paths: ['/home/u/a.txt'] } }));
     expect(preview.status).toBe('confirmation_required');
     expect(preview.preview.argv).toContain('--dry-run');
@@ -155,8 +155,52 @@ describe('stdio end to end', () => {
     const r = await c.callTool({ name: 'nas_file_roots', arguments: {} });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const text = (r as any).content[0].text as string;
-    expect(text.length).toBeLessThan(2300);
-    expect(text).toContain('[truncated: showing 2000 of');
+    expect(text.length).toBeLessThan(2600);
+    expect(body(r)).toMatchObject({ truncated: true, shown_chars: 2000 });
+  });
+
+  it('a default file read fits the default output limit', async () => {
+    const c = await connect({});
+    const r = body(await c.callTool({ name: 'nas_file_read', arguments: { path: '/home/u/a.txt' } }));
+    // In echo mode the fake prints its own argv as JSON; nas_file_read returns that text as content.
+    const length = Number(/--length=(\d+)/.exec(r.content)![1]);
+    expect(length).toBe(36000);
+    expect(Math.ceil((length * 4) / 3) + 200).toBeLessThan(60000);
+  });
+
+  it('names the configured path when UGREEN_MCP_UNC_BIN is wrong', async () => {
+    const c = await connect({ UGREEN_MCP_UNC_BIN: '/nonexistent/unc' });
+    const r = await c.callTool({ name: 'nas_file_roots', arguments: {} });
+    expect(body(r).hint).toContain('/nonexistent/unc');
+  });
+
+  it('stops a running unc when the client goes away', async () => {
+    const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'nasmcp-pid-')));
+    const pidFile = path.join(dir, 'pid');
+    const c = await connect({ FAKE_UNC_MODE: 'hang', FAKE_UNC_PIDFILE: pidFile });
+    c.callTool({ name: 'nas_file_roots', arguments: {} }).catch(() => {});
+    let pid = 0;
+    for (let i = 0; i < 50 && pid === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      try {
+        pid = Number(await readFile(pidFile, 'utf8'));
+      } catch {
+        // not written yet
+      }
+    }
+    expect(pid).toBeGreaterThan(0);
+    await c.close();
+    client = undefined;
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
   });
 
   it('starts without unc and explains how to fix it', async () => {

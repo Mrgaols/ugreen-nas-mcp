@@ -44,13 +44,17 @@ const nasStatus = defineTool({
   handler: async (args, deps) => {
     const max = deps.config.maxOutputChars;
     const policy = policySummary(deps.config);
-    if (!deps.runner) return fail({ error: 'unc CLI not found', hint: INSTALL_HINT, policy }, max);
+    if (!deps.runner) return fail({ error: 'unc CLI not found', hint: deps.missingUncHint ?? INSTALL_HINT, policy }, max);
 
     const auth = await query(deps.runner, ['auth', 'status', '--check']);
     const unc = await query(deps.runner, ['version']);
     // Short fields first: the health report can be long enough to be cut off.
     const body: Record<string, unknown> = { policy };
-    if ((auth as { authenticated?: unknown }).authenticated !== true) body.hint = LOGIN_HINT;
+    if ((auth as { authenticated?: unknown }).authenticated !== true) {
+      // When the check itself failed (timeout, network, bad token) its own hint says why; "log in" would mislead.
+      const reason = (auth as { hint?: unknown }).hint;
+      body.hint = typeof reason === 'string' && reason.length > 0 ? reason : LOGIN_HINT;
+    }
     body.auth = auth;
     body.unc = unc;
     if (args.doctor) body.doctor = await query(deps.runner, ['doctor'], 120_000);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool, parse, call, riskOf, checkRows, type Row } from './helpers.js';
 import { ToolInputError } from '../../src/tools/types.js';
+import { maxCreateContentBytes } from '../../src/tools/file.js';
 
 const rows: Row[] = [
   ['nas_file_mkdir', { paths: ['/home/u/new dir'], parents: true }, ['file', 'mkdir', '--parents', '--', '/home/u/new dir'], 'write'],
@@ -155,5 +156,17 @@ describe('review: slow requests and rename targets', () => {
   it('refuses "." and ".." as a new name', () => {
     expect(() => call('nas_file_move', { source: '/a/x', destination: '..' })).toThrowError(ToolInputError);
     expect(() => call('nas_file_move', { source: '/a/x', destination: '.' })).toThrowError(ToolInputError);
+  });
+});
+
+describe('second review: file create limits', () => {
+  it('has a smaller content limit where the command line is shorter', () => {
+    expect(maxCreateContentBytes('win32')).toBe(24_000);
+    expect(maxCreateContentBytes('darwin')).toBe(100_000);
+    expect(maxCreateContentBytes('linux')).toBe(100_000);
+  });
+
+  it('warns that the content is visible on the command line', () => {
+    expect(tool('nas_file_create').description).toMatch(/command line/i);
   });
 });

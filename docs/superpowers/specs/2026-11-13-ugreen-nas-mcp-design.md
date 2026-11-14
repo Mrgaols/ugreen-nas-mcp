@@ -25,7 +25,7 @@
 | 决策 | 结论 |
 |---|---|
 | 语言与分发 | TypeScript，官方 `@modelcontextprotocol/sdk`，发布到 npm，用 `npx` 启动 |
-| 工具粒度 | 精选类型化工具，共 46 个，同类只读查询用 `kind` 枚举合并 |
+| 工具粒度 | 精选类型化工具，共 47 个，同类只读查询用 `kind` 枚举合并 |
 | 默认权限 | 只读 |
 | 传输 | 仅 stdio |
 | 底层 | 复用绿联官方 `unc` CLI，不自己实现 protobuf 通道 |
@@ -165,7 +165,7 @@ interface ToolSpec {
 
 ## 6. 工具清单
 
-共 46 个。默认只读时注册 25 个。
+共 47 个。默认只读时注册 25 个。
 
 ### 6.1 核心（1）
 
@@ -194,7 +194,7 @@ interface ToolSpec {
 | `nas_file_download` | write | `file download REMOTE LOCAL`，需本机目录；覆盖或续传本机已有文件仍属 write，因为只能发生在本机目录内 |
 | `nas_file_move` | admin | `file mv SRC DST`，目标是已存在的目录或纯文件名 |
 | `nas_file_delete` | admin | `file rm PATH... [--permanent]` |
-| `nas_file_write` | admin | `file tee PATH --content`，覆盖或追加已存在的文件 |
+| `nas_file_write` | admin | `file tee PATH`，内容经标准输入传入，覆盖或追加已存在的文件 |
 | `nas_file_quota_set` | admin | `file quota set PATH --quota-mb` |
 
 ### 6.3 search（2）
@@ -240,7 +240,8 @@ interface ToolSpec {
 
 | 工具 | 风险 | 映射 |
 |---|---|---|
-| `nas_storage_info` | read；`smart` 为 admin | `kind: disks / pools / volumes / smart` → `storage disk ls` / `pool ls` / `volume ls` / `disk smart` |
+| `nas_storage_info` | read | `kind: disks / pools / volumes` → `storage disk ls` / `pool ls` / `volume ls` |
+| `nas_storage_smart` | admin | `storage disk smart`。单独成工具，避免常规查询被客户端标成破坏性操作 |
 
 ### 6.8 ctl（4）
 
@@ -267,7 +268,7 @@ interface ToolSpec {
 - 返回一个文本内容块，内容是 `unc` 的 JSON 信封。
 - 两段式确认的第一步返回 5.4 中的结构。
 - 有 `followUp` 的工具在结果里附带 `next_step` 字段。例如 Compose 生命周期操作附「该操作是异步的，用 `nas_docker_projects` 轮询确认」。
-- 超过字符上限时截断，并附 `truncated: true` 和缩小范围的建议。
+- 超过字符上限时返回仍可解析的对象：`truncated: true`、`shown_chars`、`total_chars`、缩小范围的建议 `note`、原结果开头部分 `partial`，以及 `error` / `hint` / `next_step` / `confirm_token` 等关键字段。
 - `nas_app_list` 默认做字段精简（实测 `app ls` 原始输出约 28 万字符）：每个应用只留 ID、名称、安装状态、已装版本、可用版本。要完整信息用 `nas_app_get`。其余工具原样返回。
 
 ### 7.2 失败

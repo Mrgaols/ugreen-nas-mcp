@@ -24,7 +24,7 @@ describe.each(['README.md', 'README.en.md'])('%s', (file) => {
 
   it('states the tool counts the server actually registers', async () => {
     const text = await read(file);
-    for (const n of ['46', '25', '33', '44']) expect(text, n).toContain(n);
+    for (const n of ['47', '25', '33', '45']) expect(text, n).toContain(n);
   });
 
   it('carries no real token', async () => {

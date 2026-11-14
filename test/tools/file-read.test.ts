@@ -11,7 +11,7 @@ const rows: Row[] = [
     ['file', 'ls', '--recursive', '--limit=0', '--stream-timeout=300', '--', '/volume1/照片/a b'],
     'read',
   ],
-  ['nas_file_read', { path: '/home/u/a.txt' }, ['file', 'cat', '--offset=0', '--length=65536', '--', '/home/u/a.txt'], 'read'],
+  ['nas_file_read', { path: '/home/u/a.txt' }, ['file', 'cat', '--offset=0', '--length=36000', '--', '/home/u/a.txt'], 'read'],
   [
     'nas_file_read',
     { path: '/home/u/a.txt', offset: 100, length: 50 },
@@ -109,5 +109,20 @@ describe('file read tools', () => {
     for (const name of ['nas_file_roots', 'nas_file_list', 'nas_file_read', 'nas_file_stat', 'nas_file_find', 'nas_file_usage', 'nas_file_checksum', 'nas_file_tags']) {
       expect([tool(name).toolset, tool(name).minRisk, tool(name).maxRisk]).toEqual(['file', 'read', 'read']);
     }
+  });
+});
+
+describe('second review: file read size', () => {
+  it('defaults to a length that fits the output limit, base64 included', () => {
+    expect(tool('nas_file_read')).toBeDefined();
+    expect(call('nas_file_read', { path: '/a' }).argv).toContain('--length=36000');
+    expect(call('nas_file_read', { path: '/a' }, { maxOutputChars: 1000 }).argv).toContain('--length=1024');
+    expect(call('nas_file_read', { path: '/a' }, { maxOutputChars: 5_000_000 }).argv).toContain('--length=65536');
+    expect(call('nas_file_read', { path: '/a', length: 500000 }).argv).toContain('--length=500000');
+  });
+
+  it('explains bytes versus characters', () => {
+    expect(tool('nas_file_read').description).toMatch(/base64/i);
+    expect(tool('nas_file_read').description).toMatch(/output limit/i);
   });
 });

@@ -13,6 +13,8 @@ export interface Deps {
   runner: UncRunner | null;
   confirm: ConfirmStore;
   version: string;
+  /** Replaces the generic install advice when the server knows why unc is unavailable. */
+  missingUncHint?: string;
   /** Receives one line per call: tool name, risk and outcome. Never argument values. */
   log?: (line: string) => void;
 }
@@ -20,7 +22,7 @@ export interface Deps {
 /** One invocation of unc, without the global flags the server adds. */
 export interface UncCall {
   argv: string[];
-  stdin?: string;
+  stdin?: string | Buffer;
   timeoutMs?: number;
   /** Seconds unc may wait for one request to the NAS; unc's own default is 30. */
   requestTimeoutSeconds?: number;
@@ -31,6 +33,8 @@ export interface UncCall {
 export interface BuildContext {
   /** The local path after it was confined to UGREEN_MCP_LOCAL_DIR. */
   localPath?: string;
+  /** The server's output limit, for tools that size their request to fit it. */
+  maxOutputChars?: number;
 }
 
 /** The arguments are individually valid but do not make sense together. */

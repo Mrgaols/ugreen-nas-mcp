@@ -18,7 +18,11 @@ await client.connect(
   new StdioClientTransport({
     command: process.execPath,
     args: [ENTRY],
-    env: { ...process.env, UGREEN_MCP_ACCESS: 'admin' },
+    // Settings from the calling shell would change which tools exist, so only the NAS credentials pass through.
+    env: {
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('UGREEN_MCP_'))),
+      UGREEN_MCP_ACCESS: 'admin',
+    },
     stderr: 'ignore',
   }),
 );
@@ -74,7 +78,7 @@ const skip = (label, why) => record(label, 'SKIP', undefined, why);
 
 // --- connection ------------------------------------------------------------------------------
 const tools = (await client.listTools()).tools;
-record(`tools listed at admin level: ${tools.length}`, tools.length === 44 ? 'PASS' : 'FAIL');
+record(`tools listed at admin level: ${tools.length}`, tools.length === 45 ? 'PASS' : 'FAIL');
 
 const status = await check('nas_status', 'nas_status', {}, (r) => r.body?.auth?.authenticated === true || 'not authenticated');
 if (status.body?.auth?.authenticated !== true) {
@@ -172,10 +176,10 @@ if (homePath) {
     r.isError && !r.text.includes('confirm_token') ? true : 'a failed preview must not return a confirm_token',
   );
 }
-await check('preview: SMART data needs confirmation', 'nas_storage_info', { kind: 'smart' }, (r) =>
+await check('preview: SMART data needs confirmation', 'nas_storage_smart', {}, (r) =>
   r.body?.status === 'confirmation_required' && /^[0-9a-f]{12}$/.test(r.body?.confirm_token ?? '') ? true : 'expected a preview with a confirm_token',
 );
-await check('a made-up confirm_token is rejected', 'nas_storage_info', { kind: 'smart', confirm_token: '000000000000' }, (r) =>
+await check('a made-up confirm_token is rejected', 'nas_storage_smart', { confirm_token: '000000000000' }, (r) =>
   r.isError ? true : 'a forged token must not execute',
 );
 

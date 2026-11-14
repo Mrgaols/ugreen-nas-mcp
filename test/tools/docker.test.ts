@@ -132,3 +132,16 @@ describe('review: synchronous docker operations', () => {
     expect(call('nas_docker_container_control', { action: 'restart', container_ids: ['a', 'b'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
   });
 });
+
+describe('second review: docker', () => {
+  it('puts the folder of a dir check under the path allowlist', () => {
+    const check = tool('nas_docker_check');
+    expect(check.nasPaths!(parse('nas_docker_check', { kind: 'dir', dir: '/volume1/docker' }))).toEqual(['/volume1/docker']);
+    expect(check.nasPaths!(parse('nas_docker_check', { kind: 'port', port: 80 }))).toEqual([]);
+  });
+
+  it('gives project creation a longer request timeout and a size limit', () => {
+    expect(call('nas_docker_project_create', { name: 'n', path: '/volume1/docker/n', compose_yaml: 'services: {}' })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 315_000 });
+    expect(() => parse('nas_docker_project_create', { name: 'n', path: '/p', compose_yaml: 'x'.repeat(1_048_577) })).toThrow();
+  });
+});

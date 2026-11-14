@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ToolInputError, cmd, defineTool, opt, type ToolSpec } from './types.js';
 
-const taskIds = z.array(z.string().min(1)).max(50);
+const taskIds = z.array(z.string().min(1)).min(1).max(50);
 
 const downloadList = defineTool({
   name: 'nas_download_list',
@@ -71,7 +71,7 @@ const downloadControl = defineTool({
   risk: (a) => (a.action === 'remove' || a.all ? 'admin' : 'write'),
   build: (a) => {
     const ids = a.task_ids ?? [];
-    if (a.all === ids.length > 0) {
+    if (a.all === (ids.length > 0)) {
       throw new ToolInputError('Give either task_ids (at least one) or all: true, not both and not neither.');
     }
     const verb = a.action === 'remove' ? 'rm' : a.action;

@@ -103,7 +103,7 @@ export function hintFor(r: UncResult, env: Envelope | null): string | undefined 
   const text = [env?.error, ...items(env).map((i) => i.error), r.stderr]
     .filter((s): s is string => typeof s === 'string')
     .join('\n');
-  if (text.includes('尚未登录')) return LOGIN_HINT;
+  if (text.includes('尚未登录') || /not logged in/i.test(text)) return LOGIN_HINT;
   if (text.includes('HTTP 401') || text.includes('Unauthenticated')) return TOKEN_HINT;
   if (text.includes('HTTP 403') || text.includes('PermissionDenied')) {
     return text.includes('code: 1301') ? PATH_HINT : SCOPE_HINT;
@@ -144,15 +144,40 @@ export function failureFromUnc(r: UncResult, env: Envelope | null): Failure {
   return failure;
 }
 
-/** Compact JSON, redacted, and cut to the configured size with a notice that says how much is missing. */
+const TRUNCATION_NOTE =
+  'The result is larger than the output limit of this server. "partial" holds its first characters and is ' +
+  'not complete JSON. Narrow the request (deeper path, filters, lower limit, smaller length) to get the rest; ' +
+  'the user can also raise UGREEN_MCP_MAX_OUTPUT_CHARS.';
+
+/** Fields an agent needs in order to continue; they are repeated outside "partial" when a result is cut. */
+const KEPT_WHEN_TRUNCATED = ['status', 'error', 'hint', 'next_step', 'confirm_token', 'expires_in_seconds'] as const;
+
+/**
+ * Compact JSON, redacted. A result above the limit becomes an object that still parses:
+ * { truncated, shown_chars, total_chars, note, <kept fields>, partial }.
+ */
 export function toText(payload: unknown, maxChars: number): string {
   const text = redact(typeof payload === 'string' ? payload : (JSON.stringify(payload) ?? 'null'));
   if (text.length <= maxChars) return text;
-  return (
-    text.slice(0, maxChars) +
-    `\n[truncated: showing ${maxChars} of ${text.length} characters. ` +
-    'Narrow the request (deeper path, filters, lower limit) to see the rest.]'
-  );
+
+  const wrapper: Record<string, unknown> = {
+    truncated: true,
+    shown_chars: maxChars,
+    total_chars: text.length,
+    note: TRUNCATION_NOTE,
+  };
+  if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+    const source = payload as Record<string, unknown>;
+    for (const key of KEPT_WHEN_TRUNCATED) {
+      const value = source[key];
+      // Only short scalars are lifted; anything bulky stays in "partial".
+      if (typeof value === 'number' || (typeof value === 'string' && value.length <= 2000)) {
+        wrapper[key] = typeof value === 'string' ? redact(value) : value;
+      }
+    }
+  }
+  wrapper.partial = text.slice(0, maxChars);
+  return JSON.stringify(wrapper);
 }
 
 export function ok(payload: unknown, maxChars: number): CallToolResult {

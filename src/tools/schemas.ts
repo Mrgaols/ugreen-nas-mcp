@@ -30,3 +30,12 @@ export function assertParamKey(key: string, makeError: (message: string) => Erro
     throw makeError(`Parameter key must be non-empty and must not contain "=": ${JSON.stringify(key)}`);
   }
 }
+
+/** unc splits a multi-value parameter at commas and has no escape for them. */
+export function joinMultiValue(key: string, values: readonly string[], makeError: (message: string) => Error): string {
+  const bad = values.find((v) => v.includes(','));
+  if (bad !== undefined) {
+    throw makeError(`A value of the multi-value parameter "${key}" contains a comma, which cannot be passed: ${JSON.stringify(bad)}`);
+  }
+  return values.join(',');
+}

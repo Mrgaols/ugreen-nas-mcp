@@ -128,3 +128,11 @@ describe('review: allowlist root and symlinked download targets', () => {
     }
   });
 });
+
+describe('second review: transfer directory at the filesystem root', () => {
+  it('accepts paths below a root directory', async () => {
+    const fsRoot = path.parse(process.cwd()).root;
+    const here = await realpath(tmpdir());
+    expect(await resolveLocalPath(path.join(here, 'new-file.bin'), fsRoot, 'target')).toBe(path.join(here, 'new-file.bin'));
+  });
+});

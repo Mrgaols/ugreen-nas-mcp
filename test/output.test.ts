@@ -148,11 +148,31 @@ describe('toText / ok / fail', () => {
     expect(toText({ a: 'ugpoa_v1.secret', b: [1] }, 1000)).toBe('{"a":"ugpoa_v1.***","b":[1]}');
   });
 
-  it('truncates with a notice stating both sizes', () => {
+  it('truncates into a parseable object that says what is missing', () => {
     const t = toText({ data: 'x'.repeat(5000) }, 1000);
-    expect(t.startsWith('{"data":"xxx')).toBe(true);
-    expect(t).toMatch(/\[truncated: showing 1000 of \d+ characters\./);
-    expect(t.length).toBeLessThan(1300);
+    const body = JSON.parse(t);
+    expect(body.truncated).toBe(true);
+    expect(body.shown_chars).toBe(1000);
+    expect(body.total_chars).toBeGreaterThan(5000);
+    expect(body.note).toMatch(/narrow/i);
+    expect(body.partial.startsWith('{"data":"xxx')).toBe(true);
+    expect(body.partial).toHaveLength(1000);
+    expect(t.length).toBeLessThan(1600);
+  });
+
+  it('lifts the fields an agent must not lose out of a truncated result', () => {
+    const body = JSON.parse(
+      toText({ status: 'confirmation_required', confirm_token: 'abc', expires_in_seconds: 300, next_step: 'n', preview: 'x'.repeat(5000) }, 1000),
+    );
+    expect(body).toMatchObject({ truncated: true, status: 'confirmation_required', confirm_token: 'abc', expires_in_seconds: 300, next_step: 'n' });
+    const failure = JSON.parse(toText({ error: 'e', hint: 'h', result: 'x'.repeat(5000) }, 1000));
+    expect(failure).toMatchObject({ truncated: true, error: 'e', hint: 'h' });
+  });
+
+  it('truncates plain text the same way and still redacts', () => {
+    const body = JSON.parse(toText('ugpoa_v1.secret ' + 'y'.repeat(5000), 1000));
+    expect(body.truncated).toBe(true);
+    expect(body.partial.startsWith('ugpoa_v1.*** yyy')).toBe(true);
   });
 
   it('builds tool results', () => {
@@ -191,7 +211,15 @@ describe('review: timeouts, floods and field order', () => {
     const big = { success: false, error: 'PermissionDenied (HTTP 403) code: 1301', items: [{ success: false, blob: 'x'.repeat(5000) }] };
     const r = res({ exitCode: 1, out: JSON.stringify(big) });
     const textOut = (fail(failureFromUnc(r, parseEnvelope(r)), 1000).content[0] as { text: string }).text;
-    expect(textOut).toContain('"hint":');
-    expect(textOut).toContain('[truncated');
+    const parsed = JSON.parse(textOut);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.hint).toMatch(/nas_file_roots/);
+  });
+});
+
+describe('second review: login wording', () => {
+  it('recognises an English not-logged-in message too', () => {
+    const r = res({ exitCode: 1, stderr: 'Error: not logged in, run unc auth login first' });
+    expect(hintFor(r, null)).toContain('UNC_NAS_TOKEN');
   });
 });

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface UncResult {
   /** null when the process was killed or never started. */
@@ -12,7 +12,21 @@ export interface UncResult {
   spawnError?: string;
 }
 
-export type UncRunner = (argv: string[], opts?: { stdin?: string; timeoutMs?: number }) => Promise<UncResult>;
+export type UncRunner = (
+  argv: string[],
+  opts?: { stdin?: string | Buffer; timeoutMs?: number },
+) => Promise<UncResult>;
+
+const active = new Set<ChildProcessWithoutNullStreams>();
+
+/**
+ * Stops every unc process this server started and returns how many there were.
+ * Without it a transfer keeps running after the server is gone and nobody receives its result.
+ */
+export function killActiveChildren(signal: NodeJS.Signals = 'SIGTERM'): number {
+  for (const child of active) child.kill(signal);
+  return active.size;
+}
 
 export const DEFAULT_TIMEOUT_MS = 60_000;
 /** Far above any useful result (results are cut to tens of thousands of characters) and far below memory limits. */
@@ -37,7 +51,21 @@ export function createRunner(
       let overflow = false;
       let settled = false;
 
-      const child = spawn(uncBin, argv, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(uncBin, argv, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      } catch (err) {
+        // spawn throws synchronously for arguments the operating system cannot take, such as a NUL character.
+        resolve({
+          exitCode: null,
+          stdout: Buffer.alloc(0),
+          stderr: err instanceof Error ? err.message : String(err),
+          timedOut: false,
+          spawnError: (err as NodeJS.ErrnoException).code ?? 'SPAWN_FAILED',
+        });
+        return;
+      }
+      active.add(child);
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -47,6 +75,7 @@ export function createRunner(
       const finish = (exitCode: number | null, spawnError?: string) => {
         if (settled) return;
         settled = true;
+        active.delete(child);
         clearTimeout(timer);
         resolve({
           exitCode: timedOut || overflow ? null : exitCode,

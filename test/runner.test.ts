@@ -3,8 +3,8 @@ import { mkdtemp, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRunner } from '../src/unc/runner.js';
-import { locateUnc } from '../src/unc/locate.js';
+import { createRunner, killActiveChildren } from '../src/unc/runner.js';
+import { locateUnc, candidateNames, DEFAULT_FALLBACK_DIRS } from '../src/unc/locate.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-unc.mjs', import.meta.url));
 const run = (mode?: string) => createRunner(FAKE, { ...process.env, FAKE_UNC_MODE: mode ?? 'echo' });
@@ -88,14 +88,30 @@ describe('locateUnc', () => {
     await chmod(path.join(bin, 'unc'), 0o755);
     expect(await locateUnc(null, { PATH: bin, HOME: home })).toBe(path.join(bin, 'unc'));
 
-    expect(await locateUnc(null, { PATH: path.join(root, 'empty'), HOME: path.join(root, 'nohome') })).toBeNull();
+    expect(await locateUnc(null, { PATH: path.join(root, 'empty'), HOME: path.join(root, 'nohome') }, [])).toBeNull();
+  });
+
+  it('falls back to the usual install folders that GUI apps do not have on PATH', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nasmcp-loc-'));
+    const brew = path.join(root, 'homebrew', 'bin');
+    await mkdir(brew, { recursive: true });
+    await writeFile(path.join(brew, 'unc'), '#!/bin/sh\n');
+    await chmod(path.join(brew, 'unc'), 0o755);
+    const env = { PATH: path.join(root, 'empty'), HOME: path.join(root, 'nohome') };
+    expect(await locateUnc(null, env, [path.join(root, 'nothing'), brew])).toBe(path.join(brew, 'unc'));
+    expect(DEFAULT_FALLBACK_DIRS).toEqual(expect.arrayContaining(['/usr/local/bin', '/opt/homebrew/bin']));
+  });
+
+  it('never picks a .cmd or .bat shim on Windows, which cannot be started without a shell', () => {
+    expect(candidateNames('win32')).toEqual(['unc.exe']);
+    expect(candidateNames('darwin')).toEqual(['unc']);
   });
 
   it('ignores a file that is not executable', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'nasmcp-loc-'));
     await writeFile(path.join(root, 'unc'), '#!/bin/sh\n');
     await chmod(path.join(root, 'unc'), 0o644);
-    expect(await locateUnc(null, { PATH: root, HOME: path.join(root, 'nohome') })).toBeNull();
+    expect(await locateUnc(null, { PATH: root, HOME: path.join(root, 'nohome') }, [])).toBeNull();
   });
 });
 
@@ -114,5 +130,30 @@ describe('review: output cap', () => {
     const r = await runner(['x']);
     expect(r.overflow).toBeUndefined();
     expect(r.exitCode).toBe(0);
+  });
+});
+
+describe('second review: runner contract', () => {
+  it('resolves instead of rejecting when the process cannot even be spawned', async () => {
+    const r = await run()(['bad\0arg']);
+    expect(r.exitCode).toBeNull();
+    expect(r.spawnError).toBeDefined();
+    expect(r.stderr).not.toBe('');
+  });
+
+  it('stops running children on request', async () => {
+    const started = Date.now();
+    const pending = run('hang')(['x'], { timeoutMs: 30_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(killActiveChildren()).toBeGreaterThanOrEqual(1);
+    const r = await pending;
+    expect(r.exitCode).toBeNull();
+    expect(r.timedOut).toBe(false);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it('accepts raw bytes on stdin', async () => {
+    const r = await run()(['x'], { stdin: Buffer.from('héllo') });
+    expect(JSON.parse(r.stdout.toString('utf8')).stdin).toBe('héllo');
   });
 });

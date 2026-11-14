@@ -15,6 +15,7 @@ export const INSTRUCTIONS = `This server manages the user's own UGREEN NAS throu
 - Some operations are asynchronous: success means "accepted". Verify with the matching list tool before reporting completion.
 - After a failed write, check the current state before trying again. Do not retry automatically.
 - Tools that delete, overwrite, stop services or change accounts first run as a preview and return a confirm_token. Show the preview to the user, then call the same tool with identical arguments plus confirm_token.
+- A result with "truncated": true was cut to the server's output limit: "partial" is only the beginning. Narrow the request instead of guessing the rest.
 - If server policy rejects a call (access level, allowed paths, local directory), tell the user which environment variable to change. Do not look for another tool to get around it.`;
 
 const CONFIRM_NEXT_STEP =
@@ -62,7 +63,7 @@ export async function executeTool(
     const args = parsed.data;
 
     if (spec.handler) return await spec.handler(args, deps);
-    if (!deps.runner) return fail({ error: 'unc CLI not found', hint: INSTALL_HINT }, max);
+    if (!deps.runner) return fail({ error: 'unc CLI not found', hint: deps.missingUncHint ?? INSTALL_HINT }, max);
 
     const callRisk = spec.risk(args);
     risk = callRisk;
@@ -88,7 +89,7 @@ export async function executeTool(
     }
     for (const p of spec.nasPaths?.(args) ?? []) assertNasPathAllowed(p, config.allowedPaths);
 
-    const ctx: BuildContext = {};
+    const ctx: BuildContext = { maxOutputChars: max };
     if (spec.localPath) {
       if (!config.localDir) {
         throw new PolicyError(
@@ -101,6 +102,10 @@ export async function executeTool(
     }
 
     const call = spec.build(args, ctx);
+    // The operating system cannot pass a NUL inside an argument; say so instead of failing in spawn.
+    if (call.argv.some((arg) => arg.includes('\0'))) {
+      throw new ToolInputError('Arguments must not contain a NUL character.');
+    }
     const globals = [call.raw ? '--format=raw' : '--format=json'];
     if (call.requestTimeoutSeconds !== undefined) globals.push(`--timeout=${call.requestTimeoutSeconds}`);
     const runOpts = { stdin: call.stdin, timeoutMs: call.timeoutMs };
@@ -143,7 +148,9 @@ export async function executeTool(
     exit = result.exitCode ?? 'killed';
 
     if (call.raw) {
-      if (result.exitCode !== 0 || result.timedOut || result.spawnError) return fail(failureFromUnc(result, null), max);
+      if (result.exitCode !== 0 || result.timedOut || result.overflow || result.spawnError) {
+        return fail(failureFromUnc(result, null), max);
+      }
       return ok(spec.render ? spec.render(result.stdout, args) : result.stdout.toString('utf8'), max);
     }
 

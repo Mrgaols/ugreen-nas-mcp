@@ -66,7 +66,7 @@ describe('search and download tools', () => {
 
   it('requires exactly one of task_ids and all', () => {
     expect(() => call('nas_download_control', { action: 'pause' })).toThrowError(ToolInputError);
-    expect(() => call('nas_download_control', { action: 'pause', task_ids: [] })).toThrowError(ToolInputError);
+    expect(() => call('nas_download_control', { action: 'pause', task_ids: [] })).toThrow();
     expect(() => call('nas_download_control', { action: 'pause', task_ids: ['1'], all: true })).toThrowError(ToolInputError);
   });
 
@@ -103,5 +103,13 @@ describe('search and download tools', () => {
     expect([tool('nas_download_list').toolset, tool('nas_download_list').maxRisk]).toEqual(['download', 'read']);
     expect([tool('nas_download_create').minRisk, tool('nas_download_create').maxRisk]).toEqual(['write', 'write']);
     expect([tool('nas_download_control').minRisk, tool('nas_download_control').maxRisk]).toEqual(['write', 'admin']);
+  });
+});
+
+describe('second review: download list', () => {
+  it('refuses an empty task list instead of listing everything', () => {
+    expect(tool('nas_download_list')).toBeDefined();
+    expect(() => parse('nas_download_list', { task_ids: [] })).toThrow();
+    expect(call('nas_download_list', {}).argv).toEqual(['download', 'ls']);
   });
 });

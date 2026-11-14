@@ -40,8 +40,8 @@ const rows: Row[] = [
   ['nas_storage_info', { kind: 'disks', show_serial: true }, ['storage', 'disk', 'ls', '--show-serial'], 'read'],
   ['nas_storage_info', { kind: 'pools' }, ['storage', 'pool', 'ls'], 'read'],
   ['nas_storage_info', { kind: 'volumes' }, ['storage', 'volume', 'ls'], 'read'],
-  ['nas_storage_info', { kind: 'smart' }, ['storage', 'disk', 'smart'], 'admin'],
-  ['nas_storage_info', { kind: 'smart', show_serial: true }, ['storage', 'disk', 'smart', '--show-serial'], 'admin'],
+  ['nas_storage_smart', {}, ['storage', 'disk', 'smart'], 'admin'],
+  ['nas_storage_smart', { show_serial: true }, ['storage', 'disk', 'smart', '--show-serial'], 'admin'],
 ];
 
 describe('app and storage tools', () => {
@@ -64,6 +64,7 @@ describe('app and storage tools', () => {
     expect(() => parse('nas_app_manage', { action: 'install', app_ids: [] })).toThrow();
     expect(() => parse('nas_app_manage', { action: 'install', app_ids: ['a'], wait_timeout_minutes: 61 })).toThrow();
     expect(() => parse('nas_storage_info', {})).toThrow();
+    expect(() => parse('nas_storage_info', { kind: 'smart' })).toThrow();
   });
 
   it('waits for long-running app operations', () => {
@@ -133,7 +134,8 @@ describe('app and storage tools', () => {
   });
 
   it('sets registration bounds and follow-up advice', () => {
-    expect([tool('nas_storage_info').toolset, tool('nas_storage_info').minRisk, tool('nas_storage_info').maxRisk]).toEqual(['storage', 'read', 'admin']);
+    expect([tool('nas_storage_info').toolset, tool('nas_storage_info').minRisk, tool('nas_storage_info').maxRisk]).toEqual(['storage', 'read', 'read']);
+    expect([tool('nas_storage_smart').toolset, tool('nas_storage_smart').minRisk, tool('nas_storage_smart').maxRisk]).toEqual(['storage', 'admin', 'admin']);
     expect([tool('nas_app_manage').toolset, tool('nas_app_manage').minRisk, tool('nas_app_manage').maxRisk]).toEqual(['app', 'admin', 'admin']);
     expect([tool('nas_app_list').minRisk, tool('nas_app_list').maxRisk]).toEqual(['read', 'read']);
     expect(tool('nas_app_manage').followUp!(parse('nas_app_manage', { action: 'install', app_ids: ['a'] }))).toContain('nas_app_get');
@@ -145,5 +147,14 @@ describe('review: synchronous app start and stop', () => {
     expect(tool('nas_app_manage')).toBeDefined();
     expect(call('nas_app_manage', { action: 'start', app_ids: ['a', 'b'] })).toMatchObject({ requestTimeoutSeconds: 300, timeoutMs: 615_000 });
     expect(call('nas_app_manage', { action: 'install', app_ids: ['a'], install_path: '/volume1' }).requestTimeoutSeconds).toBeUndefined();
+  });
+});
+
+describe('second review: multi-value parameters', () => {
+  it('refuses a value containing a comma, which unc would split', () => {
+    expect(tool('nas_app_manage')).toBeDefined();
+    expect(() => call('nas_app_manage', { action: 'install', app_ids: ['a'], params: [{ key: 'K', value: ['a,b', 'c'] }] })).toThrowError(ToolInputError);
+    expect(() => call('nas_docker_app_rebuild', { app_id: 'a', params: [{ key: 'K', value: ['a,b'] }] })).toThrowError(ToolInputError);
+    expect(call('nas_app_manage', { action: 'install', app_ids: ['a'], params: [{ key: 'K', value: ['a', 'b'] }] }).argv).toContain('--param-multi=K=a,b');
   });
 });

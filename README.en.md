@@ -17,7 +17,7 @@ The server does two things: it maps `unc` commands to MCP tools with validated p
 ## Requirements
 
 1. **Node.js 20 or later.**
-2. **`unc` installed**, the official command-line tool for the UGOS Pro open CLI. Install it as described by UGREEN. `unc version` in a terminal should print a version.
+2. **`unc` installed**, the official command-line tool for the UGOS Pro open CLI. Install it as described by UGREEN. `unc version` in a terminal should print a version. On Windows a real `unc.exe` is required; `.cmd` and `.bat` wrapper scripts are not supported.
 3. **An access token**, created in the NAS control panel; it starts with `ugpoa_v1.`. Select the permission nodes you need when creating it: a token can only call the methods it was granted, and its permissions cannot be changed afterwards. Installing and uninstalling apps needs a token issued by an administrator.
 
 ## Quick start
@@ -97,7 +97,7 @@ Ask the agent "how healthy are the disks in my NAS?" or "is my NAS under load ri
 | `UGREEN_MCP_ALLOWED_PATHS` | unrestricted | NAS folders the server may touch, comma-separated, e.g. `/volume1/docs,/home/alice` |
 | `UGREEN_MCP_LOCAL_DIR` | unset | Local directory uploads and downloads may use. Without it the transfer tools do not exist |
 | `UGREEN_MCP_UNC_BIN` | auto | Full path to `unc`. By default `PATH` is searched, then `~/.local/bin/unc` |
-| `UGREEN_MCP_MAX_OUTPUT_CHARS` | `60000` | Maximum characters returned per call; longer output is truncated |
+| `UGREEN_MCP_MAX_OUTPUT_CHARS` | `60000` | Maximum characters returned per call. A longer result comes back as `{"truncated": true, "partial": "…"}`, where `partial` is its beginning |
 
 ## Permission model
 
@@ -109,7 +109,7 @@ Out of the box the server is read-only. An agent can only change things after yo
 |---|---|---|
 | `read` (default) | Read-only queries | 25 |
 | `write` | Adds operations that only add, never overwrite and never interrupt a service: create folders and new files, copy, restore from the recycle bin, tag files, create and pause download tasks, pull images | 33 (35 with a local directory) |
-| `admin` | Adds delete, move, overwrite, quotas, starting and stopping containers and apps, creating and deleting Compose projects, installing and uninstalling apps, creating users | 44 (46 with a local directory) |
+| `admin` | Adds delete, move, overwrite, quotas, starting and stopping containers and apps, creating and deleting Compose projects, installing and uninstalling apps, creating users | 45 (47 with a local directory) |
 
 Tools above the configured level are not registered, so the agent cannot see or call them. For some tools the risk depends on the arguments: `nas_file_copy` is `write` by default and `admin` with `on_conflict: "replace"`.
 
@@ -124,7 +124,7 @@ A token works once, expires after 5 minutes and is bound to the arguments: chang
 
 ### Path allowlist
 
-With `UGREEN_MCP_ALLOWED_PATHS` set, every path used by the `file` and `search` toolsets must lie inside those folders, and so must the target folder of `nas_download_create`. Calls that could otherwise omit a path, such as listing the personal folder, must then name one.
+With `UGREEN_MCP_ALLOWED_PATHS` set, every path used by the `file` and `search` toolsets must lie inside those folders, and so must the target folder of `nas_download_create` and the folder checked by `nas_docker_check`. Calls that could otherwise omit a path, such as listing the personal folder, must then name one.
 
 ### Local transfer directory
 
@@ -143,7 +143,7 @@ Read this before raising the access level.
 
 ## Tools
 
-46 in total. The risk column is the lowest level the tool needs; "→ admin" means some arguments raise it to `admin`.
+47 in total. The risk column is the lowest level the tool needs; "→ admin" means some arguments raise it to `admin`.
 
 ### Core
 
@@ -218,7 +218,8 @@ Read this before raising the access level.
 
 | Tool | Risk | What it does |
 |---|---|---|
-| `nas_storage_info` | read → admin | Disks, pools and volumes; raw SMART data is admin |
+| `nas_storage_info` | read | State and capacity of disks, pools and volumes |
+| `nas_storage_smart` | admin | Raw SMART data of the disks (read-only, but sensitive diagnostics) |
 
 ### ctl
 

@@ -77,7 +77,9 @@ export function assertNasPathAllowed(p: string, allowed: readonly string[]): str
 }
 
 function isInside(root: string, candidate: string): boolean {
-  return candidate === root || candidate.startsWith(root + path.sep);
+  if (candidate === root) return true;
+  // A filesystem root ("/" or "C:\\") already ends with the separator.
+  return candidate.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
 }
 
 /**

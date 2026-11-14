@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_MAX_OUTPUT_CHARS as DEFAULT_OUTPUT_CHARS } from '../config.js';
 import { sizeFilter, timeoutSeconds, unixSeconds } from './schemas.js';
 import { ToolInputError, cmd, defineTool, opt, requestTimeout, streamTimeout, type ToolSpec } from './types.js';
 
@@ -65,20 +66,34 @@ const fileRead = defineTool({
   title: 'Read part of a file',
   description:
     'Read bytes from a file on the NAS without saving it locally. Returns { path, offset, bytes, encoding, ' +
-    'content }: encoding is "utf8" when the bytes are valid UTF-8 text, otherwise "base64". By default the ' +
-    'first 64 KiB are read and at most 1 MiB per call; for a longer file call again with offset increased by ' +
-    'the bytes already read. A result with fewer bytes than requested means the end of the file was reached. ' +
-    'To copy a whole file to this computer use nas_file_download.',
+    'content }: encoding is "utf8" when the bytes are valid UTF-8 text, otherwise "base64". offset, length and ' +
+    'bytes count bytes of the file, not characters of content: multi-byte text has fewer characters than ' +
+    'bytes, and base64 is a third longer. Without length, the call reads as much as fits the output limit of ' +
+    'this server (36000 bytes with default settings); a larger length, up to 1 MiB, only helps when the user ' +
+    'raised that limit, otherwise the result comes back truncated. For a longer file call again with offset ' +
+    'increased by bytes. A result with fewer bytes than requested means the end of the file was reached. To ' +
+    'copy a whole file to this computer use nas_file_download.',
   input: {
     path: nasPath('File to read.'),
     offset: z.number().int().min(0).default(0).describe('Byte offset to start reading at.'),
-    length: z.number().int().min(1).max(1048576).default(65536).describe('Number of bytes to read (max 1048576).'),
+    length: z
+      .number()
+      .int()
+      .min(1)
+      .max(1048576)
+      .optional()
+      .describe('Number of bytes to read (max 1048576). Omit it to read as much as fits the output limit.'),
   },
   minRisk: 'read',
   maxRisk: 'read',
   risk: () => 'read',
   nasPaths: (a) => [a.path],
-  build: (a) => ({ argv: cmd(['file', 'cat'], [opt('offset', a.offset), opt('length', a.length)], [a.path]), raw: true }),
+  build: (a, ctx) => {
+    // Base64 needs 4 characters per 3 bytes, plus the JSON around it: 60 % of the limit is safe for both encodings.
+    const fitting = Math.floor((ctx.maxOutputChars ?? DEFAULT_OUTPUT_CHARS) * 0.6);
+    const length = a.length ?? Math.min(65536, Math.max(1024, fitting));
+    return { argv: cmd(['file', 'cat'], [opt('offset', a.offset), opt('length', length)], [a.path]), raw: true };
+  },
   render: (stdout, a) => {
     let content: string;
     let encoding: 'utf8' | 'base64' = 'utf8';
@@ -276,6 +291,15 @@ const fileTags = defineTool({
 // ---------------------------------------------------------------------------------------------
 
 const onConflict = z.enum(['rename', 'skip', 'replace']);
+
+/**
+ * unc file touch takes its content as a command-line argument only (it does not read standard input),
+ * so the limit follows the shortest command line the platform allows: about 32 KB on Windows.
+ */
+export function maxCreateContentBytes(platform: NodeJS.Platform = process.platform): number {
+  return platform === 'win32' ? 24_000 : 100_000;
+}
+const CREATE_LIMIT = maxCreateContentBytes();
 const utf8Bytes = (s: string) => Buffer.byteLength(s, 'utf8');
 
 const fileMkdir = defineTool({
@@ -304,14 +328,18 @@ const fileCreate = defineTool({
   title: 'Create a new file',
   description:
     'Create a new file on the NAS with the given content. It fails if the path already exists and never ' +
-    'overwrites; to change an existing file use nas_file_write. Content is limited to 100000 bytes; for larger ' +
-    'or existing local files use nas_file_upload. Set base64 to true to write binary content given as Base64.',
+    `overwrites; to change an existing file use nas_file_write. The content argument is limited to ${CREATE_LIMIT} ` +
+    'bytes as given (for Base64 that is the encoded text, so about three quarters of it in decoded bytes); for ' +
+    'larger or existing local files use nas_file_upload. Set base64 to true to write binary content given as ' +
+    'Base64. The content is passed on the command line of a local process, where other users of this computer ' +
+    'can see it while the call runs: do not use this tool for passwords or keys. For those, create an empty ' +
+    'file here and fill it with nas_file_write, which does not expose the content.',
   input: {
     path: nasPath('File to create.'),
     content: z
       .string()
       .default('')
-      .refine((s) => utf8Bytes(s) <= 100_000, 'content must be at most 100000 bytes; use nas_file_upload for larger files')
+      .refine((s) => utf8Bytes(s) <= CREATE_LIMIT, `content must be at most ${CREATE_LIMIT} bytes; use nas_file_upload for larger files`)
       .describe('Text content, or Base64 when base64 is true. Empty creates an empty file.'),
     base64: z.boolean().default(false).describe('Treat content as Base64 and write the decoded bytes.'),
   },

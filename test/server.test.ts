@@ -19,7 +19,7 @@ import { enabledTools, executeTool, buildServer, INSTRUCTIONS } from '../src/ser
 import { coreTools } from '../src/tools/core.js';
 import type { UncResult } from '../src/unc/runner.js';
 
-const calls: Array<{ argv: string[]; stdin?: string; timeoutMs?: number }> = [];
+const calls: Array<{ argv: string[]; stdin?: string | Buffer; timeoutMs?: number }> = [];
 const reply = (env: unknown, exitCode = 0): UncResult => ({
   exitCode,
   stdout: Buffer.from(JSON.stringify(env)),
@@ -422,27 +422,92 @@ describe('review: request timeout and truncation-safe results', () => {
       reply({ success: true, dry_run: true, blob: 'x'.repeat(5000) }),
     );
     const r = await executeTool(slowAdmin, { paths: ['/a/x'] }, d);
-    const raw = (r.content[0] as { text: string }).text;
-    expect(raw).toContain('[truncated');
-    expect(raw).toMatch(/"confirm_token":"[0-9a-f]{12}"/);
-    expect(raw).toContain('"next_step":');
+    const body = text(r);
+    expect(body.truncated).toBe(true);
+    expect(body.confirm_token).toMatch(/^[0-9a-f]{12}$/);
+    expect(body.status).toBe('confirmation_required');
+    expect(body.next_step).toContain('confirm_token');
   });
 
   it('keeps next_step readable when the result is larger than the output limit', async () => {
     const d = deps({ UGREEN_MCP_ACCESS: 'admin', UGREEN_MCP_MAX_OUTPUT_CHARS: '1000' }, () =>
       reply({ success: true, blob: 'x'.repeat(5000) }),
     );
-    const first = await executeTool(slowAdmin, { paths: ['/a/x'] }, d);
-    const t = /"confirm_token":"([0-9a-f]{12})"/.exec((first.content[0] as { text: string }).text)![1];
-    const done = await executeTool(slowAdmin, { paths: ['/a/x'], confirm_token: t }, d);
-    expect((done.content[0] as { text: string }).text).toContain('"next_step":"verify afterwards"');
+    const t = text(await executeTool(slowAdmin, { paths: ['/a/x'] }, d)).confirm_token;
+    const done = text(await executeTool(slowAdmin, { paths: ['/a/x'], confirm_token: t }, d));
+    expect(done.truncated).toBe(true);
+    expect(done.next_step).toBe('verify afterwards');
   });
 
   it('nas_status keeps the policy readable when the health report is huge', async () => {
     const d = deps({ UGREEN_MCP_MAX_OUTPUT_CHARS: '1000' }, () => reply({ success: true, authenticated: true, blob: 'x'.repeat(5000) }));
     const r = await executeTool(coreTools[0], { doctor: true }, d);
-    const raw = (r.content[0] as { text: string }).text;
-    expect(raw).toContain('[truncated');
-    expect(raw).toContain('"policy":{"access":"read"');
+    const body = text(r);
+    expect(body.truncated).toBe(true);
+    expect(body.partial).toContain('"policy":{"access":"read"');
+  });
+});
+
+describe('second review: pipeline', () => {
+  const rawTool = defineTool({
+    name: 'nas_t_raw',
+    toolset: 'file',
+    title: 'r',
+    description: 'd',
+    input: { path: z.string(), name: z.string().optional() },
+    minRisk: 'read',
+    maxRisk: 'read',
+    risk: () => 'read',
+    build: (a, ctx) => ({ argv: cmd(['file', 'cat'], [opt('length', ctx.maxOutputChars)], [a.path, ...(a.name ? [a.name] : [])]), raw: true }),
+  });
+
+  it('does not return a flooded raw result as success', async () => {
+    const d = deps({}, () => ({ exitCode: null, stdout: Buffer.from('partial'), stderr: '', timedOut: false, overflow: true }));
+    const r = await executeTool(rawTool, { path: '/a' }, d);
+    expect(r.isError).toBe(true);
+    expect(text(r).error).toMatch(/too much output/i);
+  });
+
+  it('tells build how much output fits', async () => {
+    const d = deps({ UGREEN_MCP_MAX_OUTPUT_CHARS: '5000' }, () => ({ exitCode: 0, stdout: Buffer.from('x'), stderr: '', timedOut: false }));
+    await executeTool(rawTool, { path: '/a' }, d);
+    expect(calls[0].argv).toContain('--length=5000');
+  });
+
+  it('refuses a NUL character in any argument with a readable error, without running unc', async () => {
+    const d = deps();
+    const r = await executeTool(rawTool, { path: '/a', name: 'bad\0name' }, d);
+    expect(r.isError).toBe(true);
+    expect(text(r).error).toMatch(/NUL/);
+    expect(text(r).error).not.toMatch(/Internal error/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('nas_status passes on the real reason when the login check itself failed', async () => {
+    const d = deps({}, () => ({ exitCode: null, stdout: Buffer.alloc(0), stderr: '', timedOut: true }));
+    const body = text(await executeTool(coreTools[0], {}, d));
+    expect(body.hint).toMatch(/did not finish in time/i);
+    expect(body.hint).not.toContain('unc auth login');
+  });
+
+  it('uses the hint the server was started with when unc is missing', async () => {
+    const d = { ...deps(), runner: null, missingUncHint: 'UGREEN_MCP_UNC_BIN points to /x/unc, which is not an executable file.' };
+    expect(text(await executeTool(rawTool, { path: '/a' }, d)).hint).toContain('/x/unc');
+    expect(text(await executeTool(coreTools[0], {}, d)).hint).toContain('/x/unc');
+  });
+
+  it('marks a tool as destructive only when it can never be read-only', async () => {
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const d = deps({ UGREEN_MCP_ACCESS: 'admin' });
+    const server = buildServer(d);
+    await server.connect(serverT);
+    const client = new Client({ name: 't', version: '0' });
+    await client.connect(clientT);
+    const byName = Object.fromEntries((await client.listTools()).tools.map((t) => [t.name, t]));
+    expect(byName.nas_storage_info.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(byName.nas_storage_info.inputSchema.properties).not.toHaveProperty('confirm_token');
+    expect(byName.nas_storage_smart.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.nas_storage_smart.inputSchema.properties).toHaveProperty('confirm_token');
+    await client.close();
   });
 });
